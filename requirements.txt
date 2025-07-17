@@ -1,0 +1,8 @@
+# requirements.txt
+streamlit
+langchain
+langchain-google-genai
+langchain_community
+pypdf
+langchain-chroma
+sentence-transformers
