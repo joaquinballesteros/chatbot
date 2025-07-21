@@ -7,3 +7,4 @@ pypdf
 langchain-chroma
 sentence-transformers
 nest-asyncio
+pandas

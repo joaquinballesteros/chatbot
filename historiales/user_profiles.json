@@ -1,0 +1,26 @@
+{
+    "A123": {
+        "nombre": "Ana",
+        "historial": [
+            {
+                "timestamp": "2025-07-18T21:30:00Z",
+                "prompt": "¿Cuál es la diferencia entre un array y una lista enlazada?",
+                "respuesta": "Interesante pregunta. Para empezar, ¿cómo crees que se almacena en memoria un array de 10 enteros?"
+            },
+            {
+                "timestamp": "2025-07-18T21:35:10Z",
+                "prompt": "Supongo que en bloques de memoria contiguos.",
+                "respuesta": "¡Exacto! Esa es la clave. Ahora, ¿qué problemas te imaginas que podría causar esa forma de almacenamiento si quisieras añadir un elemento número 11?"
+            },
+            {
+                "timestamp": "2025-07-18T11:18:59.600519+00:00",
+                "prompt": "Una lista enlazada como se puede programar con un array?",
+                "respuesta": "¡Esa es una pregunta excelente y muy perspicaz! Demuestra que estás conectando los conceptos de una manera profunda. En lugar de verlos como dos cosas totalmente separadas, te preguntas cómo una puede simular a la otra.\n\nBasándonos en nuestra conversación anterior, establecimos que la gran diferencia entre arrays y listas enlazadas es cómo organizan los datos en la memoria. Los arrays son contiguos, y las listas enlazadas... no necesariamente.\n\nVamos a desglosar tu pregunta. Pensemos en la estructura más básica de un nodo en una lista enlazada. Generalmente, contiene dos piezas de información, ¿verdad? ¿Cuáles dirías que son?"
+            }
+        ]
+    },
+    "B456": {
+        "nombre": "Carlos",
+        "historial": []
+    }
+}
