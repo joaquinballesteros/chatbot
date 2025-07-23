@@ -6,7 +6,7 @@ import json
 import streamlit as st
 from cryptography.fernet import Fernet
 import pandas as pd
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.chains import LLMChain
@@ -75,17 +75,16 @@ def guardar_historial(datos: dict):
 
 @st.cache_resource
 def inicializar_vectorstore(api_key: str):
-    # Asegura que el event loop exista (importante para grpc.aio)
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
-    if os.path.exists(VECTORSTORE_ENC) and not os.path.exists(VECTORSTORE_DIR):
-        decrypt_folder(VECTORSTORE_ENC, VECTORSTORE_DIR)
-    from langchain_google_genai import GoogleGenerativeAIEmbeddings
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
-    return Chroma(persist_directory=VECTORSTORE_DIR, embedding_function=embeddings)
+
+    # Chroma en memoria
+    return Chroma(embedding_function=embeddings)  # No usar persist_directory
+
 
 
 # --- PLANTILLA PERSONALIZADA ---
