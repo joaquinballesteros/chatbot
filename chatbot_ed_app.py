@@ -130,8 +130,14 @@ df_estudiantes = cargar_datos_estudiantes()
 
 # Obtener parámetros de la URL
 params = st.query_params
-idcv_param = params.get("idcv", [None])[0]
-nombre_param = params.get("nombre", [None])[0]
+idcv_param = st.query_params.get("idcv", [None])[0]
+nombre_param = st.query_params.get("nombre", [None])[0]
+
+if isinstance(idcv_param, list):
+    idcv_param = idcv_param[0]
+if isinstance(nombre_param, list):
+    nombre_param = nombre_param[0]
+
 
 # Validación: solo si vienen por GET y son válidos
 if idcv_param and nombre_param:
