@@ -137,16 +137,19 @@ params = st.query_params
 idcv_param = st.query_params.get("idcv", [None])
 nombre_param = st.query_params.get("nombre", [None])
 
+# Extraer el valor real de los parámetros (primer elemento de la lista)
+idcv_value = idcv_param[0] if isinstance(idcv_param, list) else idcv_param
+nombre_value = nombre_param[0] if isinstance(nombre_param, list) else nombre_param
 
 # Validación: solo si vienen por GET y son válidos
-if idcv_param and nombre_param:
-    user = df_estudiantes[df_estudiantes['IDCV'] == idcv_param]
+if idcv_value and nombre_value:
+    user = df_estudiantes[df_estudiantes['IDCV'] == idcv_value]
     if not user.empty:
         st.session_state.authenticated = True
-        st.session_state.user_idcv = idcv_param
+        st.session_state.user_idcv = idcv_value
         st.session_state.user_name = user.iloc[0]['Nombre']
     else:
-        st.error(f"❌ Este usuario no tiene permiso para usar el tutor.\n\nPor favor, contacta con el profesor de la asignatura. \nIDCV recibido: {idcv_param}\nNombre recibido: {nombre_param}")
+        st.error(f"❌ Este usuario no tiene permiso para usar el tutor.\n\nPor favor, contacta con el profesor de la asignatura. \nIDCV recibido: {idcv_value}\nNombre recibido: {nombre_value}")
         st.stop()
 else:
     st.error(f"❌ Acceso no autorizado. Faltan credenciales válidas en la URL.\n\nPor favor, contacta con el profesor de la asignatura.")
