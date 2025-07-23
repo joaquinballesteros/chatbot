@@ -137,16 +137,6 @@ if "esperando_respuesta" not in st.session_state:
 
 # --- LOGIN ---
 st.header("🤖 Tutor de Estructuras de Datos")
-if st.button("🧹 Borrar archivos temporales"):
-    borrados = []
-    for f in os.listdir("data"):
-        if f.endswith(".tmp"):
-            try:
-                os.remove(os.path.join("data", f))
-                borrados.append(f)
-            except Exception as e:
-                st.error(f"No se pudo borrar {f}: {e}")
-    st.success(f"Se eliminaron: {', '.join(borrados) if borrados else 'ningún archivo .tmp'}")
 
 df_estudiantes = cargar_datos_estudiantes()
 
@@ -202,25 +192,26 @@ for m in st.session_state.messages:
 if st.session_state.esperando_respuesta:
     st.chat_input("Escribe aquí tu duda...", disabled=True, placeholder="⏳ Esperando respuesta del tutor...")
 else:
-    prompt = st.chat_input("Escribe aquí tu duda...")
-    if prompt:
+    with st.form("chat_form", clear_on_submit=True):
+        prompt = st.text_input("Escribe aquí tu duda...", disabled=st.session_state.esperando_respuesta, placeholder="⏳ Esperando respuesta del tutor..." if st.session_state.esperando_respuesta else "")
+        submitted = st.form_submit_button("Enviar")
+
+    if submitted and prompt and not st.session_state.esperando_respuesta:
         st.session_state.esperando_respuesta = True
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").markdown(prompt)
 
         try:
-            # Recuperar docs
             docs = vectorstore.similarity_search(prompt, k=5)
             context = "\n\n".join([d.page_content for d in docs])
-            # Historial formateado
             last5 = history[-5:]
             chat_hist = "\n".join([f"- {h['prompt']} => {h['respuesta']}" for h in last5]) or "El estudiante no tiene interacciones previas."
-            # Ejecutar LLM
+
             template = PromptTemplate(template=prompt_template_str, input_variables=["chat_history", "context", "question"])
             chain = LLMChain(llm=llm, prompt=template)
             resp = chain.invoke({"chat_history": chat_hist, "context": context, "question": prompt}).get("text")
+
             st.chat_message("assistant").markdown(resp)
-            # Guardar
             history.append({"prompt": prompt, "respuesta": resp})
             guardar_historial(user_profiles)
             st.session_state.messages.append({"role": "assistant", "content": resp})
@@ -229,4 +220,3 @@ else:
             st.code(traceback.format_exc(), language="python")
         finally:
             st.session_state.esperando_respuesta = False
-
