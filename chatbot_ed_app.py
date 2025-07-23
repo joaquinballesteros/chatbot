@@ -22,10 +22,14 @@ fernet = Fernet(fernet_key)
 
 # --- RUTAS Y CONSTANTES ---
 DATA_DIR = "data"
+TMP_DIR = tempfile.gettempdir()  # Carpeta temporal del sistema
+
 USERS_CSV_ENC = os.path.join(DATA_DIR, "users.csv.encrypted")
-USERS_CSV_TMP = os.path.join(DATA_DIR, "users.csv.tmp")
+USERS_CSV_TMP = os.path.join(TMP_DIR, "users.csv.tmp")
+
 HIST_ENC = os.path.join(DATA_DIR, "user_profiles.json.encrypted")
-HIST_TMP = os.path.join(DATA_DIR, "user_profiles.json.tmp")
+HIST_TMP = os.path.join(TMP_DIR, "user_profiles.json.tmp")
+
 VECTORSTORE_ENC = os.path.join(DATA_DIR, ".RAG.encrypted")
 VECTORSTORE_DIR = os.path.join(DATA_DIR, ".RAG")
 
@@ -52,7 +56,7 @@ def cargar_datos_estudiantes():
         decrypt_file(USERS_CSV_ENC, USERS_CSV_TMP)
     df = pd.read_csv(USERS_CSV_TMP, dtype=str)
     df['IDCV'] = df['IDCV'].str.strip()
-    os.remove(USERS_CSV_TMP)
+    os.remove(USERS_CSV_TMP)  # Limpieza
     return df
 
 # --- GESTIÓN DE HISTORIAL CIFRADO ---
@@ -60,7 +64,6 @@ def cargar_o_crear_historiales():
     if os.path.exists(HIST_ENC) and not os.path.exists(HIST_TMP):
         decrypt_file(HIST_ENC, HIST_TMP)
     if not os.path.exists(HIST_TMP):
-        os.makedirs(DATA_DIR, exist_ok=True)
         with open(HIST_TMP, 'w', encoding='utf-8') as f:
             json.dump({}, f)
     try:
@@ -68,11 +71,12 @@ def cargar_o_crear_historiales():
     except:
         return {}
 
-
 def guardar_historial(datos: dict):
     with open(HIST_TMP, 'w', encoding='utf-8') as f:
         json.dump(datos, f, ensure_ascii=False, indent=4)
     encrypt_file(HIST_TMP, HIST_ENC)
+    os.remove(HIST_TMP)  # Limpieza
+
 
 @st.cache_resource
 def inicializar_vectorstore(api_key: str):
@@ -140,7 +144,7 @@ if idcv_param and nombre_param:
         st.error("❌ Este usuario no tiene permiso para usar el tutor.\n\nPor favor, contacta con el profesor de la asignatura.")
         st.stop()
 else:
-    st.error("❌ Acceso no autorizado. Faltan credenciales válidas en la URL.\n\nPor favor, contacta con el profesor de la asignatura. {idcv_param}\nNombre recibido: {nombre_param}")
+    st.error(f"❌ Acceso no autorizado. Faltan credenciales válidas en la URL.\n\nPor favor, contacta con el profesor de la asignatura.\nIDCV recibido: {idcv_param}\nNombre recibido: {nombre_param}")
     st.stop()
 
 
