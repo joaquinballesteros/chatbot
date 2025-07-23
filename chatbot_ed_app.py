@@ -83,9 +83,6 @@ def guardar_historial(datos: dict):
     except Exception as e:
         st.error("❌ Error al guardar el historial")
         st.code(traceback.format_exc(), language="python")
-    finally:
-        if os.path.exists(HIST_TMP):
-            os.remove(HIST_TMP)
 
 
 
