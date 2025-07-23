@@ -137,6 +137,17 @@ if "esperando_respuesta" not in st.session_state:
 
 # --- LOGIN ---
 st.header("🤖 Tutor de Estructuras de Datos")
+if st.button("🧹 Borrar archivos temporales"):
+    borrados = []
+    for f in os.listdir("data"):
+        if f.endswith(".tmp"):
+            try:
+                os.remove(os.path.join("data", f))
+                borrados.append(f)
+            except Exception as e:
+                st.error(f"No se pudo borrar {f}: {e}")
+    st.success(f"Se eliminaron: {', '.join(borrados) if borrados else 'ningún archivo .tmp'}")
+
 df_estudiantes = cargar_datos_estudiantes()
 
 # Obtener parámetros de la URL
