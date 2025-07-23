@@ -84,7 +84,7 @@ def inicializar_vectorstore(api_key: str):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
 
     # Chroma en memoria
-    return Chroma(embedding_function=embeddings)  # No usar persist_directory
+    return Chroma(collection_name="chatbot", embedding_function=embeddings)  # No usar persist_directory
 
 
 
