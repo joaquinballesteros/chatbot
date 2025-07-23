@@ -61,15 +61,19 @@ def cargar_datos_estudiantes():
 
 # --- GESTIÓN DE HISTORIAL CIFRADO ---
 def cargar_o_crear_historiales():
-    if os.path.exists(HIST_ENC) and not os.path.exists(HIST_TMP):
+    if os.path.exists(HIST_ENC):
         decrypt_file(HIST_ENC, HIST_TMP)
     if not os.path.exists(HIST_TMP):
         with open(HIST_TMP, 'w', encoding='utf-8') as f:
             json.dump({}, f)
+
     try:
-        return json.load(open(HIST_TMP, 'r', encoding='utf-8'))
-    except:
+        with open(HIST_TMP, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        st.error(f"❌ Error cargando historial: {e}")
         return {}
+
 
 def guardar_historial(datos: dict):
     with open(HIST_TMP, 'w', encoding='utf-8') as f:
