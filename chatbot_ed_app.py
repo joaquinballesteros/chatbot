@@ -7,7 +7,7 @@ import streamlit as st
 from cryptography.fernet import Fernet
 import pandas as pd
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
@@ -125,7 +125,7 @@ st.header("🤖 Tutor de Estructuras de Datos")
 df_estudiantes = cargar_datos_estudiantes()
 
 # Obtener parámetros de la URL
-params = st.experimental_get_query_params()
+params = st.query_params
 idcv_param = params.get("idcv", [None])[0]
 nombre_param = params.get("nombre", [None])[0]
 
