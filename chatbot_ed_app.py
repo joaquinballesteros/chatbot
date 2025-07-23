@@ -7,7 +7,7 @@ import streamlit as st
 from cryptography.fernet import Fernet
 import pandas as pd
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
@@ -152,7 +152,7 @@ except Exception as e:
     st.error("❌ Error al inicializar el vectorstore:")
     st.code(traceback.format_exc(), language="python")
     st.stop()
-    
+
 llm=ChatGoogleGenerativeAI(model="gemini-2.5-pro",google_api_key=api_key,temperature=0.5)
 
 # Mensajes previos\if "messages" not in st.session_state:
