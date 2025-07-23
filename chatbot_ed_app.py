@@ -190,18 +190,24 @@ for m in st.session_state.messages:
 
 
 # Entrada usuario
+if "prompt_input" not in st.session_state:
+    st.session_state.prompt_input = ""
+
 if st.session_state.esperando_respuesta:
     st.chat_input("⏳ Esperando respuesta...", disabled=True)
 else:
-    # Entrada del usuario controlada
     with st.form("chat_form", clear_on_submit=True):
         prompt = st.text_input(
             "Tu pregunta:",
-            placeholder="Escribe aquí tu duda..."
+            value=st.session_state.prompt_input,
+            placeholder="Escribe aquí tu duda...",
+            disabled=st.session_state.esperando_respuesta
         )
         submitted = st.form_submit_button("Enviar")
 
     if submitted and prompt:
+        # Vaciar input inmediatamente
+        st.session_state.prompt_input = ""
         st.session_state.esperando_respuesta = True
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").markdown(prompt)
@@ -233,3 +239,4 @@ else:
             st.code(traceback.format_exc(), language="python")
         finally:
             st.session_state.esperando_respuesta = False
+
