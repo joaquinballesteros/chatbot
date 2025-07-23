@@ -187,6 +187,8 @@ llm=ChatGoogleGenerativeAI(model="gemini-2.5-pro",google_api_key=api_key,tempera
 st.session_state.messages=[{"role":"assistant","content":"¿Sobre qué tema o estructura de datos tienes dudas hoy?"}]
 for m in st.session_state.messages:
     st.chat_message(m["role"]).markdown(m["content"])
+
+
 # Entrada usuario
 if st.session_state.esperando_respuesta:
     st.chat_input("⏳ Esperando respuesta...", disabled=True)
@@ -199,14 +201,13 @@ else:
         )
         submitted = st.form_submit_button("Enviar")
 
-    # Procesamiento solo si se envió
     if submitted and prompt:
         st.session_state.esperando_respuesta = True
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").markdown(prompt)
 
-        with st.spinner("⏳ El tutor está pensando..."):
-            try:
+        try:
+            with st.spinner("⏳ El tutor está pensando..."):
                 docs = vectorstore.similarity_search(prompt, k=5)
                 context = "\n\n".join([d.page_content for d in docs])
                 last5 = history[-5:]
@@ -227,8 +228,8 @@ else:
                 history.append({"prompt": prompt, "respuesta": resp})
                 guardar_historial(user_profiles)
                 st.session_state.messages.append({"role": "assistant", "content": resp})
-            except Exception as e:
-                st.error("❌ Error procesando la respuesta:")
-                st.code(traceback.format_exc(), language="python")
-            finally:
-                st.session_state.esperando_respuesta = False
+        except Exception as e:
+            st.error("❌ Error procesando la respuesta:")
+            st.code(traceback.format_exc(), language="python")
+        finally:
+            st.session_state.esperando_respuesta = False
