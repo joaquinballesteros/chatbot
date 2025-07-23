@@ -135,6 +135,9 @@ Eres un tutor de programación experto y tu objetivo es personalizar la asistenc
 # --- CONFIGURACIÓN STREAMLIT ---
 st.set_page_config(page_title="Tutor ED App", layout="wide")
 
+if "esperando_respuesta" not in st.session_state:
+    st.session_state.esperando_respuesta = False
+
 # --- LOGIN ---
 st.header("🤖 Tutor de Estructuras de Datos")
 df_estudiantes = cargar_datos_estudiantes()
@@ -188,21 +191,34 @@ for m in st.session_state.messages:
     st.chat_message(m["role"]).markdown(m["content"])
 
 # Entrada usuario
-if prompt:=st.chat_input("Escribe aquí tu duda..."):
-    st.session_state.messages.append({"role":"user","content":prompt})
-    st.chat_message("user").markdown(prompt)
-    # Recuperar docs
-    docs = vectorstore.similarity_search(prompt, k=5)
-    context = "\n\n".join([d.page_content for d in docs])
-    # Historial formateado
-    last5=history[-5:]
-    chat_hist="\n".join([f"- {h['prompt']} => {h['respuesta']}" for h in last5]) or "El estudiante no tiene interacciones previas."
-    # Ejecutar LLM
-    template=PromptTemplate(template=prompt_template_str, input_variables=["chat_history","context","question"])
-    chain=LLMChain(llm=llm,prompt=template)
-    resp=chain.invoke({"chat_history":chat_hist,"context":context,"question":prompt}).get("text")
-    st.chat_message("assistant").markdown(resp)
-    # Guardar
-    history.append({"prompt":prompt,"respuesta":resp})
-    guardar_historial(user_profiles)
-    st.session_state.messages.append({"role":"assistant","content":resp})
+if st.session_state.esperando_respuesta:
+    st.chat_input("Escribe aquí tu duda...", disabled=True, placeholder="⏳ Esperando respuesta del tutor...")
+else:
+    prompt = st.chat_input("Escribe aquí tu duda...")
+    if prompt:
+        st.session_state.esperando_respuesta = True
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.chat_message("user").markdown(prompt)
+
+        try:
+            # Recuperar docs
+            docs = vectorstore.similarity_search(prompt, k=5)
+            context = "\n\n".join([d.page_content for d in docs])
+            # Historial formateado
+            last5 = history[-5:]
+            chat_hist = "\n".join([f"- {h['prompt']} => {h['respuesta']}" for h in last5]) or "El estudiante no tiene interacciones previas."
+            # Ejecutar LLM
+            template = PromptTemplate(template=prompt_template_str, input_variables=["chat_history", "context", "question"])
+            chain = LLMChain(llm=llm, prompt=template)
+            resp = chain.invoke({"chat_history": chat_hist, "context": context, "question": prompt}).get("text")
+            st.chat_message("assistant").markdown(resp)
+            # Guardar
+            history.append({"prompt": prompt, "respuesta": resp})
+            guardar_historial(user_profiles)
+            st.session_state.messages.append({"role": "assistant", "content": resp})
+        except Exception as e:
+            st.error("❌ Error procesando la respuesta:")
+            st.code(traceback.format_exc(), language="python")
+        finally:
+            st.session_state.esperando_respuesta = False
+
