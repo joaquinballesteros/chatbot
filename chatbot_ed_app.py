@@ -76,10 +76,17 @@ def cargar_o_crear_historiales():
 
 
 def guardar_historial(datos: dict):
-    with open(HIST_TMP, 'w', encoding='utf-8') as f:
-        json.dump(datos, f, ensure_ascii=False, indent=4)
-    encrypt_file(HIST_TMP, HIST_ENC)
-    os.remove(HIST_TMP)  # Limpieza
+    try:
+        with open(HIST_TMP, 'w', encoding='utf-8') as f:
+            json.dump(datos, f, ensure_ascii=False, indent=4)
+        encrypt_file(HIST_TMP, HIST_ENC)
+    except Exception as e:
+        st.error("❌ Error al guardar el historial")
+        st.code(traceback.format_exc(), language="python")
+    finally:
+        if os.path.exists(HIST_TMP):
+            os.remove(HIST_TMP)
+
 
 
 @st.cache_resource
