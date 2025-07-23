@@ -1,10 +1,12 @@
 import os
 import shutil
 import tempfile
+from xml.dom.minidom import Document
 import streamlit as st
 from cryptography.fernet import Fernet
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
+from langchain_community.document_loaders import PyPDFLoader
 
 # --- CONSTANTES DE CIFRADO ---
 PERSIST_DIR = "./.RAG/"
@@ -42,11 +44,6 @@ def decrypt_folder(src_file: str, dest_folder: str):
     shutil.unpack_archive(tmp_zip.name, dest_folder)
     os.unlink(tmp_zip.name)
 
-# --- INTEGRACIÓN EN STREAMLIT ---
-# 1) Al inicio de la app, antes de cargar vectorstore
-if os.path.exists(ENCRYPTED_FILE):
-    decrypt_folder(ENCRYPTED_FILE, PERSIST_DIR)
-
 @st.cache_resource
 def cargar_vectorstore(api_key: str):
     """
@@ -63,30 +60,74 @@ def cargar_vectorstore(api_key: str):
     )
     return vect
 
-# … tu lógica de autenticación y UI de Streamlit aquí …
-
-# 3) Cada vez que inicialices o actualices y persistas:
-#    - En tu script de creación (createRAG), tras vectorstore.persist():
-#       encrypt_folder(PERSIST_DIR, ENCRYPTED_FILE)
-#
-#    - Si prefieres hacerlo al final de la sesión Streamlit, puedes:
-#st.session_state.vector_store.persist()
-#encrypt_folder(PERSIST_DIR, ENCRYPTED_FILE)
-
-# --- EJEMPLO DE USO EN createRAG.py ---
-def inicializar_tutor_ia(api_key):
-    # (… cargado de PDFs, split, etc…)
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
-    vectorstore = Chroma.from_documents(
-        documents=textos_divididos,
-        embedding=embeddings,
-        persist_directory=PERSIST_DIR
+@st.cache_resource
+def almacena_encriptado_vectorstore(api_key: str):
+    """
+    Almacena encriptados en la carpeta  en disco con los documentos que hay en la carpeta "Documentos".
+    """
+    # 1) Configura el cliente de Google Generative AI
+    client = ChatGoogleGenerativeAI(
+        model="models/chat-bison-001",
+        google_api_key=api_key
     )
-    vectorstore.persist()
-    # Tras persistir, ciframos todo .RAG/ y limpiamos en claro
-    encrypt_folder(PERSIST_DIR, ENCRYPTED_FILE)
-    print("Vectorstore generado, cifrado y listo.")
-    return vectorstore
 
-# Ahora, tu código Streamlit puede llamar a cargar_vectorstore(st.secrets['GOOGLE_API_KEY'])
-# y nunca expondrá los datos en claro en el navegador del usuario.
+    # 2) Carga los documentos de la carpeta "Documentos"
+    docs = []
+    for filename in os.listdir("documentos"):
+        print(f"Procesando archivo: {filename}")
+        ext = os.path.splitext(filename)[1].lower()
+        filepath = os.path.join("documentos", filename)
+        if ext == ".pdf":
+            loader = PyPDFLoader(filepath)
+            docs.extend(loader.load())
+        elif ext == ".md":
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+                docs.append(Document(page_content=content, metadata={"source": filename}))
+        else:
+            # Para cualquier otro tipo de archivo de texto (txt, py, java, c, etc.)
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    docs.append(Document(page_content=content, metadata={"source": filename}))
+            except Exception:
+                pass  # Ignora archivos que no se pueden leer como texto
+
+    # 3) Crea el vectorstore y lo persiste
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/embedding-001",
+        google_api_key=api_key
+    )
+    vect = Chroma.from_documents(docs, embeddings, persist_directory=PERSIST_DIR)
+
+    vect.persist()
+
+    # Encripta la carpeta
+    encrypt_folder(PERSIST_DIR, ENCRYPTED_FILE)
+
+    # Elimina la carpeta persistente después de encriptar
+    if os.path.exists(PERSIST_DIR):
+        shutil.rmtree(PERSIST_DIR)
+
+
+    
+
+def main():
+    st.title("Generar y Encriptar Vectorstore")
+
+    # --- CARGA DE API KEY ---
+    try:
+        google_api_key = st.secrets["GOOGLE_API_KEY"]
+        # Elimina cualquier carpeta persistente previa
+        if os.path.exists(PERSIST_DIR):
+            shutil.rmtree(PERSIST_DIR)
+
+        almacena_encriptado_vectorstore(google_api_key)
+        st.success("Vectorstore creado y encriptado correctamente.")
+        
+    except (KeyError, FileNotFoundError):
+        st.error("Error Crítico: La GOOGLE_API_KEY no está configurada en los secretos de Streamlit.")
+        st.info("Por favor, asegúrate de añadir la clave en 'Settings > Secrets' en tu app de Streamlit Community Cloud.")
+if __name__ == "__main__":
+    main()
+
