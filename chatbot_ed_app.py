@@ -190,7 +190,7 @@ for m in st.session_state.messages:
 
 # Entrada usuario
 if st.session_state.esperando_respuesta:
-    st.chat_input("Escribe aquí tu duda...", disabled=True, placeholder="⏳ Esperando respuesta del tutor...")
+    st.chat_input("⏳ Esperando respuesta...", disabled=True)
 else:
     with st.form("chat_form", clear_on_submit=True):
         prompt = st.text_input("Escribe aquí tu duda...", disabled=st.session_state.esperando_respuesta, placeholder="⏳ Esperando respuesta del tutor..." if st.session_state.esperando_respuesta else "")
