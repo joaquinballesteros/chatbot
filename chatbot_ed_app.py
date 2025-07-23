@@ -11,6 +11,7 @@ from langchain_community.vectorstores import Chroma
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 from langchain_core.documents import Document
+from create_rag import cargar_vectorstore, decrypt_folder  # Asegúrate de que createRAG.py está en tu PYTHONPATH o mismo directorio
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 # Se llama una única vez y al principio de todo.
@@ -27,11 +28,16 @@ STUDENT_DATA_DIRECTORY = "estudiantes"
 HISTORY_DIRECTORY = "historiales"
 HISTORY_FILE = os.path.join(HISTORY_DIRECTORY, "user_profiles.json")
 
+PERSIST_DIR = "./.RAG/"
+ENCRYPTED_FILE = "./.RAG.encrypted"
+
 nest_asyncio.apply()
 
 # --- CARGA DE API KEY ---
 try:
     google_api_key = st.secrets["GOOGLE_API_KEY"]
+    if os.path.exists(ENCRYPTED_FILE):
+        decrypt_folder(ENCRYPTED_FILE, PERSIST_DIR)
 except (KeyError, FileNotFoundError):
     st.error("Error Crítico: La GOOGLE_API_KEY no está configurada en los secretos de Streamlit.")
     st.info("Por favor, asegúrate de añadir la clave en 'Settings > Secrets' en tu app de Streamlit Community Cloud.")
@@ -99,22 +105,7 @@ def verificar_credenciales(df_estudiantes, codigo_acceso):
 @st.cache_resource
 def inicializar_tutor_ia(_api_key):
     try:
-        if not os.path.exists(DOCS_DIRECTORY) or not any(f.endswith('.pdf') for f in os.listdir(DOCS_DIRECTORY)):
-            st.error(f"Error: La carpeta '{DOCS_DIRECTORY}' no existe o no contiene archivos PDF.")
-            return None
-        documentos = []
-        for filename in os.listdir(DOCS_DIRECTORY):
-            if filename.endswith('.pdf'):
-                path = os.path.join(DOCS_DIRECTORY, filename)
-                loader = PyPDFLoader(path)
-                documentos.extend(loader.load())
-        if not documentos:
-            return None
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=250)
-        textos_divididos = text_splitter.split_documents(documentos)
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=_api_key)
-        vectorstore = Chroma.from_documents(documents=textos_divididos, embedding=embeddings)
-        return vectorstore
+        return cargar_vectorstore(google_api_key)
     except Exception as e:
         st.error(f"Error crítico al inicializar el vector store: {e}")
         return None
@@ -173,7 +164,7 @@ if not st.session_state.authenticated:
                         st.session_state.user_name = nombre_usuario
                         st.session_state.user_idcv = idcv
                         with st.spinner("Preparando el entorno del tutor..."):
-                            st.session_state.vector_store = inicializar_tutor_ia(google_api_key)
+                            st.session_state.vector_store = cargar_vectorstore(google_api_key)
                         st.rerun()
                     else:
                         st.error("Identificador no encontrado.")
