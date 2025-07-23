@@ -1,6 +1,7 @@
 .env
-./.venv
+.venv
 .DS_Store
 .streamlit/secrets.toml
-./documentos
-.RAG/
+documentos/*
+.RAG/*
+__pycache__

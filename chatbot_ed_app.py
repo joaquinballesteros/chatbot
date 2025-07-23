@@ -1,251 +1,176 @@
-import streamlit as st
+# == chatbot_ed_app.py ==
 import os
-import pandas as pd
+import shutil
+import tempfile
 import json
-from datetime import datetime, timezone
-import nest_asyncio
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+import streamlit as st
+from cryptography.fernet import Fernet
+import pandas as pd
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
+from langchain_community.document_loaders import PyPDFLoader
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
+from create_rag import decrypt_folder
 from langchain_core.documents import Document
-from create_rag import cargar_vectorstore, decrypt_folder  # Asegúrate de que createRAG.py está en tu PYTHONPATH o mismo directorio
+import asyncio
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-# Se llama una única vez y al principio de todo.
-st.set_page_config(
-    page_title="Tutor de Estructuras de Datos",
-    page_icon="🤖",
-    layout="wide"
-)
+# --- CONSTANTES DE CIFRADO ---
+fernet_key = st.secrets["encryption"]["key"].encode()
+fernet = Fernet(fernet_key)
 
-# --- CONSTANTES ---
-MODEL_NAME = "gemini-2.5-pro"
-DOCS_DIRECTORY = "documentos"
-STUDENT_DATA_DIRECTORY = "estudiantes"
-HISTORY_DIRECTORY = "historiales"
-HISTORY_FILE = os.path.join(HISTORY_DIRECTORY, "user_profiles.json")
+# --- RUTAS Y CONSTANTES ---
+DATA_DIR = "data"
+USERS_CSV_ENC = os.path.join(DATA_DIR, "users.csv.encrypted")
+USERS_CSV_TMP = os.path.join(DATA_DIR, "users.csv.tmp")
+HIST_ENC = os.path.join(DATA_DIR, "user_profiles.json.encrypted")
+HIST_TMP = os.path.join(DATA_DIR, "user_profiles.json.tmp")
+VECTORSTORE_ENC = os.path.join(DATA_DIR, ".RAG.encrypted")
+VECTORSTORE_DIR = os.path.join(DATA_DIR, ".RAG")
 
-PERSIST_DIR = "./.RAG/"
-ENCRYPTED_FILE = "./.RAG.encrypted"
+# --- FUNCIONES DE CIFRADO/DESCIFRADO ---
 
-nest_asyncio.apply()
-
-# --- CARGA DE API KEY ---
-try:
-    google_api_key = st.secrets["GOOGLE_API_KEY"]
-    if os.path.exists(ENCRYPTED_FILE):
-        decrypt_folder(ENCRYPTED_FILE, PERSIST_DIR)
-except (KeyError, FileNotFoundError):
-    st.error("Error Crítico: La GOOGLE_API_KEY no está configurada en los secretos de Streamlit.")
-    st.info("Por favor, asegúrate de añadir la clave en 'Settings > Secrets' en tu app de Streamlit Community Cloud.")
-    st.stop()
+def decrypt_file(src_path: str, dest_path: str):
+    token = open(src_path, 'rb').read()
+    data = fernet.decrypt(token)
+    with open(dest_path, 'wb') as f:
+        f.write(data)
 
 
-# --- FUNCIONES DE GESTIÓN DE HISTORIAL ---
-def cargar_o_crear_historiales():
-    if not os.path.exists(HISTORY_DIRECTORY):
-        os.makedirs(HISTORY_DIRECTORY)
-    if not os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-            json.dump({}, f)
-        return {}
-    try:
-        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
-        return {}
+def encrypt_file(src_path: str, dest_path: str):
+    data = open(src_path, 'rb').read()
+    token = fernet.encrypt(data)
+    with open(dest_path, 'wb') as f:
+        f.write(token)
+    os.remove(src_path)
 
-def guardar_historial(datos):
-    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(datos, f, ensure_ascii=False, indent=4)
-
-def formatear_historial_para_prompt(historial_usuario, n_ultimos=5):
-    if not historial_usuario:
-        return "El estudiante no tiene interacciones previas."
-    interacciones_recientes = historial_usuario[-n_ultimos:]
-    historial_formateado = "\n".join([
-        f"- Pregunta anterior: \"{item['prompt']}\"\n  Respuesta del tutor: \"{item['respuesta']}\""
-        for item in interacciones_recientes
-    ])
-    return f"A continuación se muestran las interacciones más recientes del estudiante:\n{historial_formateado}"
-
-# --- FUNCIONES DE AUTENTICACIÓN ---
+# --- CARGA DE USUARIOS ---
 @st.cache_data(ttl=3600)
-def cargar_datos_estudiantes(directorio):
+def cargar_datos_estudiantes():
+    if not os.path.exists(USERS_CSV_TMP):
+        decrypt_file(USERS_CSV_ENC, USERS_CSV_TMP)
+    df = pd.read_csv(USERS_CSV_TMP, dtype=str)
+    df['IDCV'] = df['IDCV'].str.strip()
+    os.remove(USERS_CSV_TMP)
+    return df
+
+# --- GESTIÓN DE HISTORIAL CIFRADO ---
+def cargar_o_crear_historiales():
+    if os.path.exists(HIST_ENC) and not os.path.exists(HIST_TMP):
+        decrypt_file(HIST_ENC, HIST_TMP)
+    if not os.path.exists(HIST_TMP):
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(HIST_TMP, 'w', encoding='utf-8') as f:
+            json.dump({}, f)
     try:
-        archivos_csv = [f for f in os.listdir(directorio) if f.endswith('.csv')]
-        if not archivos_csv:
-            st.error(f"Error de configuración: No se encontró ningún fichero CSV en la carpeta '{directorio}'.")
-            return None
-        ruta_csv = os.path.join(directorio, archivos_csv[0])
-        df = pd.read_csv(ruta_csv)
-        df['IDCV'] = df['IDCV'].astype(str).str.strip()
-        df['DNI/NIE/Pasaporte'] = df['DNI/NIE/Pasaporte'].astype(str).str.strip()
-        return df
-    except Exception as e:
-        st.error(f"Error al cargar fichero de estudiantes: {e}")
-        return None
+        return json.load(open(HIST_TMP, 'r', encoding='utf-8'))
+    except:
+        return {}
 
-def verificar_credenciales(df_estudiantes, codigo_acceso):
-    if df_estudiantes is None or not codigo_acceso:
-        return None, None
-    codigo_acceso = str(codigo_acceso).strip()
-    usuario = df_estudiantes[df_estudiantes['IDCV'] == codigo_acceso]
-    if not usuario.empty:
-        return usuario.iloc[0]['IDCV'], usuario.iloc[0]['Nombre']
-    usuario = df_estudiantes[df_estudiantes['DNI/NIE/Pasaporte'] == codigo_acceso]
-    if not usuario.empty:
-        return usuario.iloc[0]['IDCV'], usuario.iloc[0]['Nombre']
-    return None, None
 
-# --- FUNCIONES DEL TUTOR DE IA ---
+def guardar_historial(datos: dict):
+    with open(HIST_TMP, 'w', encoding='utf-8') as f:
+        json.dump(datos, f, ensure_ascii=False, indent=4)
+    encrypt_file(HIST_TMP, HIST_ENC)
+
 @st.cache_resource
-def inicializar_tutor_ia(_api_key):
+def inicializar_vectorstore(api_key: str):
+    # Asegura que el event loop exista (importante para grpc.aio)
     try:
-        return cargar_vectorstore(google_api_key)
-    except Exception as e:
-        st.error(f"Error crítico al inicializar el vector store: {e}")
-        return None
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
-# --- PLANTILLA DE PROMPT ---
-prompt_personalizado_template_con_historial = """
+    if os.path.exists(VECTORSTORE_ENC) and not os.path.exists(VECTORSTORE_DIR):
+        decrypt_folder(VECTORSTORE_ENC, VECTORSTORE_DIR)
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+    return Chroma(persist_directory=VECTORSTORE_DIR, embedding_function=embeddings)
+
+
+# --- PLANTILLA PERSONALIZADA ---
+prompt_template_str = """
 Eres un tutor de programación experto y tu objetivo es personalizar la asistencia basándote en el historial del estudiante para fomentar la innovación y el pensamiento crítico. No debes dar respuestas directas. Tu método se basa en guiar al estudiante hacia la solución.
 
 **Contexto del Historial del Estudiante:**
-Aquí tienes un resumen de las últimas preguntas del estudiante. Úsalo para entender su nivel actual y adaptar tus preguntas. Si ves que pregunta repetidamente sobre un tema, quizás necesite un enfoque diferente o una pista más fundamental.
 {chat_history}
 
 **Documentos de la Asignatura:**
-Usa los siguientes documentos para fundamentar tus respuestas, referenciandolos por su nombre de archivo y página.
 {context}
 
 **Reglas Estrictas de Interacción:**
-1.  **Usa el Método Socrático:** Nunca des la respuesta directa. Guía con preguntas.
-2.  **Adapta la Dificultad:** Usa el historial para juzgar si tus preguntas son muy fáciles o muy difíciles.
-3.  **Fomenta la Autoexplicación:** Pide que explique su razonamiento.
-4.  **Retroalimentación Constructiva y Personalizada:** Si comete un error similar a uno anterior (visible en el historial), puedes decir algo como: "Veo que de nuevo estamos trabajando con punteros. ¿Recuerdas qué pasaba la última vez que intentamos acceder a memoria no inicializada?".
-5.  **Estimula la Curiosidad:** Termina con preguntas abiertas.
+1. Usa el Método Socrático: nunca des la respuesta directa. Guía con preguntas.
+2. Adapta la dificultad según el historial.
+3. Fomenta la autoexplicación.
+4. Da retroalimentación constructiva y personalizada.
+5. Estimula la curiosidad: termina con preguntas abiertas.
 
-**Implementación:**
-Las implementaciones serán en Java o C. Asegúrate de que el estudiante especifica el lenguaje.
+**Implementación en Java o C según indique el estudiante.**
 
-**Pregunta Actual del Estudiante:**
+**Pregunta Actual:**
 {question}
 
-**Respuesta del Tutor Personalizada (siguiendo todas las reglas):**
-"""
+**Respuesta del Tutor:**"""
 
-# --- LÓGICA PRINCIPAL DE LA APLICACIÓN ---
+# --- CONFIGURACIÓN STREAMLIT ---
+st.set_page_config(page_title="Tutor ED App", layout="wide")
 
-if 'authenticated' not in st.session_state:
+# --- LOGIN ---
+st.header("🤖 Tutor de Estructuras de Datos")
+df_estudiantes = cargar_datos_estudiantes()
+if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-# PANTALLA DE LOGIN
 if not st.session_state.authenticated:
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.header("🤖 Tutor de Estructuras de Datos")
-        st.write("Por favor, identifícate con tu DNI o IDCV para acceder.")
-        for dir_path in [STUDENT_DATA_DIRECTORY, DOCS_DIRECTORY, HISTORY_DIRECTORY]:
-            if not os.path.exists(dir_path):
-                os.makedirs(dir_path)
-        df_estudiantes = cargar_datos_estudiantes(STUDENT_DATA_DIRECTORY)
-        if df_estudiantes is not None:
-            with st.form("login_form"):
-                codigo_acceso = st.text_input("DNI / IDCV", placeholder="Introduce tu identificador")
-                submitted = st.form_submit_button("Acceder")
-                if submitted:
-                    idcv, nombre_usuario = verificar_credenciales(df_estudiantes, codigo_acceso)
-                    if nombre_usuario:
-                        st.session_state.authenticated = True
-                        st.session_state.user_name = nombre_usuario
-                        st.session_state.user_idcv = idcv
-                        with st.spinner("Preparando el entorno del tutor..."):
-                            st.session_state.vector_store = cargar_vectorstore(google_api_key)
-                        st.rerun()
-                    else:
-                        st.error("Identificador no encontrado.")
-
-# PANTALLA DEL CHATBOT
-else:
-    st.title(f"🤖 Tutor ED - UMA")
-    st.write(f"Hola **{st.session_state.user_name}**, haz una pregunta. Te guiaré para que encuentres la solución.")
-    st.markdown("---")
-    
-    vector_store = st.session_state.get('vector_store')
-    if not vector_store:
-        st.error("El tutor no pudo inicializarse correctamente. Contacta al administrador.")
+    with st.form("login_form"):
+        codigo = st.text_input("Código de Acceso")
+        if st.form_submit_button("Acceder"):
+            user = df_estudiantes[df_estudiantes['IDCV']==codigo.strip()]
+            if not user.empty:
+                st.session_state.authenticated=True
+                st.session_state.user_idcv=codigo.strip()
+                st.session_state.user_name=user.iloc[0]['Nombre']
+            else:
+                st.error("Código no válido.")
+    # Si aún no se ha autenticado, detenemos aquí
+    if not st.session_state.authenticated:
         st.stop()
-        
-    user_profiles = cargar_o_crear_historiales()
-    user_idcv = st.session_state.user_idcv
-    if user_idcv not in user_profiles:
-        user_profiles[user_idcv] = {"nombre": st.session_state.user_name, "historial": []}
-    current_user_history = user_profiles[user_idcv]["historial"]
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = [{"role": "assistant", "content": "¿Sobre qué tema o estructura de datos tienes dudas hoy?"}]
+# --- CHAT ---
+st.title(f"Hola, {st.session_state.user_name}")
+user_profiles = cargar_o_crear_historiales()
+uid = st.session_state.user_idcv
+if uid not in user_profiles:
+    user_profiles[uid]={"nombre":st.session_state.user_name,"historial":[]}
+history=user_profiles[uid]["historial"]
 
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+# Inicializa LLM y vectorstore
+api_key=st.secrets["GOOGLE_API_KEY"]
+vectorstore=inicializar_vectorstore(api_key)
+llm=ChatGoogleGenerativeAI(model="gemini-2.5-pro",google_api_key=api_key,temperature=0.5)
 
-    if prompt := st.chat_input("Escribe aquí tu duda o código..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+# Mensajes previos\if "messages" not in st.session_state:
+st.session_state.messages=[{"role":"assistant","content":"¿Sobre qué tema o estructura de datos tienes dudas hoy?"}]
+for m in st.session_state.messages:
+    st.chat_message(m["role"]).markdown(m["content"])
 
-        with st.chat_message("assistant"):
-            with st.spinner("Buscando documentos y personalizando tu pregunta..."):
-                
-                # Paso 1: Recuperar documentos relevantes
-                retriever = vector_store.as_retriever(search_kwargs={'k': 5})
-                retrieved_docs = retriever.get_relevant_documents(prompt)
-                
-                # Formatear el contexto de los documentos para el prompt
-                context_text = "\n\n".join([doc.page_content for doc in retrieved_docs])
-                
-                # Paso 2: Formatear el historial del chat
-                historial_formateado = formatear_historial_para_prompt(current_user_history)
-                
-                # Paso 3: Crear la plantilla y la cadena LLM
-                prompt_template = PromptTemplate(
-                    template=prompt_personalizado_template_con_historial, 
-                    input_variables=["context", "question", "chat_history"]
-                )
-                llm = ChatGoogleGenerativeAI(model=MODEL_NAME, google_api_key=google_api_key, temperature=0.5, convert_system_message_to_human=True)
-                llm_chain = LLMChain(llm=llm, prompt=prompt_template)
-                
-                # Paso 4: Ejecutar la cadena con TODAS las variables necesarias
-                response = llm_chain.invoke({
-                    "context": context_text,
-                    "question": prompt,
-                    "chat_history": historial_formateado
-                })
-                
-                full_response = response.get("text", "Lo siento, he encontrado un problema al generar la respuesta.")
-
-                # Guardar la nueva interacción en el historial
-                nueva_interaccion = {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "prompt": prompt,
-                    "respuesta": full_response
-                }
-                user_profiles[user_idcv]["historial"].append(nueva_interaccion)
-                guardar_historial(user_profiles)
-
-                st.markdown(full_response)
-                
-                # Mostrar las fuentes
-                with st.expander("Fuentes consultadas"):
-                    if retrieved_docs:
-                        for doc in retrieved_docs:
-                            page_num = doc.metadata.get('page', -1) + 1
-                            st.write(f"- Fichero: {os.path.basename(doc.metadata.get('source', 'N/A'))}, Página: ~{page_num}")
-                    else:
-                        st.write("No se encontraron documentos relevantes para esta pregunta.")
-        
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+# Entrada usuario
+if prompt:=st.chat_input("Escribe aquí tu duda..."):
+    st.session_state.messages.append({"role":"user","content":prompt})
+    st.chat_message("user").markdown(prompt)
+    # Recuperar docs
+    retr=vectorstore.as_retriever(search_kwargs={"k":5})
+    docs=retr.get_relevant_documents(prompt)
+    context="\n\n".join([d.page_content for d in docs])
+    # Historial formateado
+    last5=history[-5:]
+    chat_hist="\n".join([f"- {h['prompt']} => {h['respuesta']}" for h in last5]) or "El estudiante no tiene interacciones previas."
+    # Ejecutar LLM
+    template=PromptTemplate(template=prompt_template_str, input_variables=["chat_history","context","question"])
+    chain=LLMChain(llm=llm,prompt=template)
+    resp=chain.invoke({"chat_history":chat_hist,"context":context,"question":prompt}).get("text")
+    st.chat_message("assistant").markdown(resp)
+    # Guardar
+    history.append({"prompt":prompt,"respuesta":resp})
+    guardar_historial(user_profiles)
+    st.session_state.messages.append({"role":"assistant","content":resp})
