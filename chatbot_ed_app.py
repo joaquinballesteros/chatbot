@@ -123,23 +123,26 @@ st.set_page_config(page_title="Tutor ED App", layout="wide")
 # --- LOGIN ---
 st.header("🤖 Tutor de Estructuras de Datos")
 df_estudiantes = cargar_datos_estudiantes()
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
 
-if not st.session_state.authenticated:
-    with st.form("login_form"):
-        codigo = st.text_input("Código de Acceso")
-        if st.form_submit_button("Acceder"):
-            user = df_estudiantes[df_estudiantes['IDCV']==codigo.strip()]
-            if not user.empty:
-                st.session_state.authenticated=True
-                st.session_state.user_idcv=codigo.strip()
-                st.session_state.user_name=user.iloc[0]['Nombre']
-            else:
-                st.error("Código no válido.")
-    # Si aún no se ha autenticado, detenemos aquí
-    if not st.session_state.authenticated:
+# Obtener parámetros de la URL
+params = st.experimental_get_query_params()
+idcv_param = params.get("idcv", [None])[0]
+nombre_param = params.get("nombre", [None])[0]
+
+# Validación: solo si vienen por GET y son válidos
+if idcv_param and nombre_param:
+    user = df_estudiantes[df_estudiantes['IDCV'] == idcv_param.strip()]
+    if not user.empty:
+        st.session_state.authenticated = True
+        st.session_state.user_idcv = idcv_param.strip()
+        st.session_state.user_name = user.iloc[0]['Nombre']
+    else:
+        st.error("❌ Este usuario no tiene permiso para usar el tutor.\n\nPor favor, contacta con el profesor de la asignatura.")
         st.stop()
+else:
+    st.error("❌ Acceso no autorizado. Faltan credenciales válidas en la URL.\n\nPor favor, contacta con el profesor de la asignatura.")
+    st.stop()
+
 
 # --- CHAT ---
 st.title(f"Hola, {st.session_state.user_name}")
