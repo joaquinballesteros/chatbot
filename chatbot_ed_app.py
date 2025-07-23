@@ -14,6 +14,7 @@ from langchain.prompts import PromptTemplate
 from create_rag import decrypt_folder
 from langchain_core.documents import Document
 import asyncio
+import traceback
 
 # --- CONSTANTES DE CIFRADO ---
 fernet_key = st.secrets["encryption"]["key"].encode()
@@ -145,7 +146,13 @@ history=user_profiles[uid]["historial"]
 
 # Inicializa LLM y vectorstore
 api_key=st.secrets["GOOGLE_API_KEY"]
-vectorstore=inicializar_vectorstore(api_key)
+try:
+    vectorstore = inicializar_vectorstore(api_key)
+except Exception as e:
+    st.error("❌ Error al inicializar el vectorstore:")
+    st.code(traceback.format_exc(), language="python")
+    st.stop()
+    
 llm=ChatGoogleGenerativeAI(model="gemini-2.5-pro",google_api_key=api_key,temperature=0.5)
 
 # Mensajes previos\if "messages" not in st.session_state:
