@@ -141,10 +141,10 @@ if idcv_param and nombre_param:
         st.session_state.user_idcv = idcv_param.strip()
         st.session_state.user_name = user.iloc[0]['Nombre']
     else:
-        st.error("❌ Este usuario no tiene permiso para usar el tutor.\n\nPor favor, contacta con el profesor de la asignatura.")
+        st.error("❌ Este usuario no tiene permiso para usar el tutor.\n\nPor favor, contacta con el profesor de la asignatura. \nIDCV recibido: {idcv_param}\nNombre recibido: {nombre_param}")
         st.stop()
 else:
-    st.error(f"❌ Acceso no autorizado. Faltan credenciales válidas en la URL.\n\nPor favor, contacta con el profesor de la asignatura.\nIDCV recibido: {idcv_param}\nNombre recibido: {nombre_param}")
+    st.error(f"❌ Acceso no autorizado. Faltan credenciales válidas en la URL.\n\nPor favor, contacta con el profesor de la asignatura.")
     st.stop()
 
 
