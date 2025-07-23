@@ -140,8 +140,7 @@ if idcv_param and nombre_param:
         st.error("❌ Este usuario no tiene permiso para usar el tutor.\n\nPor favor, contacta con el profesor de la asignatura.")
         st.stop()
 else:
-    st.error("❌ Acceso no autorizado. Faltan credenciales válidas en la URL.\n\nPor favor, contacta con el profesor de la asignatura.")
-    st.info(f"IDCV recibido: {idcv_param}\nNombre recibido: {nombre_param}")
+    st.error("❌ Acceso no autorizado. Faltan credenciales válidas en la URL.\n\nPor favor, contacta con el profesor de la asignatura. {idcv_param}\nNombre recibido: {nombre_param}")
     st.stop()
 
 
