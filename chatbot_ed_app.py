@@ -7,7 +7,7 @@ import streamlit as st
 from cryptography.fernet import Fernet
 import pandas as pd
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain_chroma import Chroma
+from langchain.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
@@ -81,10 +81,15 @@ def inicializar_vectorstore(api_key: str):
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/embedding-001",
+        google_api_key=api_key
+    )
 
-    # Chroma en memoria
-    return Chroma(collection_name="chatbot", embedding_function=embeddings)  # No usar persist_directory
+    # Vectorstore FAISS en memoria
+    return FAISS.from_texts(["dummy"], embedding=embeddings)  # Puedes cargar documentos reales luego
+
+
 
 
 
@@ -165,9 +170,8 @@ if prompt:=st.chat_input("Escribe aquí tu duda..."):
     st.session_state.messages.append({"role":"user","content":prompt})
     st.chat_message("user").markdown(prompt)
     # Recuperar docs
-    retr=vectorstore.as_retriever(search_kwargs={"k":5})
-    docs=retr.get_relevant_documents(prompt)
-    context="\n\n".join([d.page_content for d in docs])
+    docs = vectorstore.similarity_search(prompt, k=5)
+    context = "\n\n".join([d.page_content for d in docs])
     # Historial formateado
     last5=history[-5:]
     chat_hist="\n".join([f"- {h['prompt']} => {h['respuesta']}" for h in last5]) or "El estudiante no tiene interacciones previas."
