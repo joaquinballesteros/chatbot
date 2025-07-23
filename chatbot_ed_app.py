@@ -132,8 +132,8 @@ Eres un tutor de programación experto y tu objetivo es personalizar la asistenc
 # --- CONFIGURACIÓN STREAMLIT ---
 st.set_page_config(page_title="Tutor ED App", layout="wide")
 
-
-st.session_state.esperando_respuesta = False
+if "esperando_respuesta" not in st.session_state:
+    st.session_state.esperando_respuesta = False
 
 # --- LOGIN ---
 st.header("🤖 Tutor de Estructuras de Datos")
