@@ -192,25 +192,45 @@ for m in st.session_state.messages:
 if st.session_state.esperando_respuesta:
     st.chat_input("⏳ Esperando respuesta...", disabled=True)
 else:
+    # Entrada del usuario controlada
     with st.form("chat_form", clear_on_submit=True):
-        prompt = st.text_input("Escribe aquí tu duda...", disabled=st.session_state.esperando_respuesta, placeholder="⏳ Esperando respuesta del tutor..." if st.session_state.esperando_respuesta else "")
+        input_disabled = st.session_state.esperando_respuesta
+        prompt = st.text_input(
+            "Tu pregunta:",
+            disabled=input_disabled,
+            placeholder="⏳ Espera la respuesta del tutor..." if input_disabled else "Escribe aquí tu duda..."
+        )
         submitted = st.form_submit_button("Enviar")
 
-    if submitted and prompt and not st.session_state.esperando_respuesta:
-        st.session_state.esperando_respuesta = True
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        st.chat_message("user").markdown(prompt)
+# Procesamiento de la pregunta
+if submitted and prompt and not st.session_state.esperando_respuesta:
+    st.session_state.esperando_respuesta = True
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.chat_message("user").markdown(prompt)
 
+    with st.spinner("⏳ El tutor está pensando..."):
         try:
+            # Recuperar documentos
             docs = vectorstore.similarity_search(prompt, k=5)
             context = "\n\n".join([d.page_content for d in docs])
+
+            # Historial de interacciones previas
             last5 = history[-5:]
             chat_hist = "\n".join([f"- {h['prompt']} => {h['respuesta']}" for h in last5]) or "El estudiante no tiene interacciones previas."
 
-            template = PromptTemplate(template=prompt_template_str, input_variables=["chat_history", "context", "question"])
+            # Ejecutar el modelo
+            template = PromptTemplate(
+                template=prompt_template_str,
+                input_variables=["chat_history", "context", "question"]
+            )
             chain = LLMChain(llm=llm, prompt=template)
-            resp = chain.invoke({"chat_history": chat_hist, "context": context, "question": prompt}).get("text")
+            resp = chain.invoke({
+                "chat_history": chat_hist,
+                "context": context,
+                "question": prompt
+            }).get("text")
 
+            # Mostrar respuesta y guardar
             st.chat_message("assistant").markdown(resp)
             history.append({"prompt": prompt, "respuesta": resp})
             guardar_historial(user_profiles)
