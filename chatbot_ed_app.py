@@ -140,10 +140,10 @@ nombre_param = st.query_params.get("nombre", [None])
 
 # Validación: solo si vienen por GET y son válidos
 if idcv_param and nombre_param:
-    user = df_estudiantes[df_estudiantes['IDCV'] == idcv_param.strip()]
+    user = df_estudiantes[df_estudiantes['IDCV'] == idcv_param]
     if not user.empty:
         st.session_state.authenticated = True
-        st.session_state.user_idcv = idcv_param.strip()
+        st.session_state.user_idcv = idcv_param
         st.session_state.user_name = user.iloc[0]['Nombre']
     else:
         st.error(f"❌ Este usuario no tiene permiso para usar el tutor.\n\nPor favor, contacta con el profesor de la asignatura. \nIDCV recibido: {idcv_param}\nNombre recibido: {nombre_param}")
