@@ -187,56 +187,48 @@ llm=ChatGoogleGenerativeAI(model="gemini-2.5-pro",google_api_key=api_key,tempera
 st.session_state.messages=[{"role":"assistant","content":"¿Sobre qué tema o estructura de datos tienes dudas hoy?"}]
 for m in st.session_state.messages:
     st.chat_message(m["role"]).markdown(m["content"])
-
 # Entrada usuario
 if st.session_state.esperando_respuesta:
     st.chat_input("⏳ Esperando respuesta...", disabled=True)
 else:
     # Entrada del usuario controlada
     with st.form("chat_form", clear_on_submit=True):
-        input_disabled = st.session_state.esperando_respuesta
         prompt = st.text_input(
             "Tu pregunta:",
-            disabled=input_disabled,
-            placeholder="⏳ Espera la respuesta del tutor..." if input_disabled else "Escribe aquí tu duda..."
+            placeholder="Escribe aquí tu duda..."
         )
         submitted = st.form_submit_button("Enviar")
 
-# Procesamiento de la pregunta
-if submitted and prompt and not st.session_state.esperando_respuesta:
-    st.session_state.esperando_respuesta = True
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    st.chat_message("user").markdown(prompt)
+    # Procesamiento solo si se envió
+    if submitted and prompt:
+        st.session_state.esperando_respuesta = True
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.chat_message("user").markdown(prompt)
 
-    with st.spinner("⏳ El tutor está pensando..."):
-        try:
-            # Recuperar documentos
-            docs = vectorstore.similarity_search(prompt, k=5)
-            context = "\n\n".join([d.page_content for d in docs])
+        with st.spinner("⏳ El tutor está pensando..."):
+            try:
+                docs = vectorstore.similarity_search(prompt, k=5)
+                context = "\n\n".join([d.page_content for d in docs])
+                last5 = history[-5:]
+                chat_hist = "\n".join([f"- {h['prompt']} => {h['respuesta']}" for h in last5]) or "El estudiante no tiene interacciones previas."
 
-            # Historial de interacciones previas
-            last5 = history[-5:]
-            chat_hist = "\n".join([f"- {h['prompt']} => {h['respuesta']}" for h in last5]) or "El estudiante no tiene interacciones previas."
+                template = PromptTemplate(
+                    template=prompt_template_str,
+                    input_variables=["chat_history", "context", "question"]
+                )
+                chain = LLMChain(llm=llm, prompt=template)
+                resp = chain.invoke({
+                    "chat_history": chat_hist,
+                    "context": context,
+                    "question": prompt
+                }).get("text")
 
-            # Ejecutar el modelo
-            template = PromptTemplate(
-                template=prompt_template_str,
-                input_variables=["chat_history", "context", "question"]
-            )
-            chain = LLMChain(llm=llm, prompt=template)
-            resp = chain.invoke({
-                "chat_history": chat_hist,
-                "context": context,
-                "question": prompt
-            }).get("text")
-
-            # Mostrar respuesta y guardar
-            st.chat_message("assistant").markdown(resp)
-            history.append({"prompt": prompt, "respuesta": resp})
-            guardar_historial(user_profiles)
-            st.session_state.messages.append({"role": "assistant", "content": resp})
-        except Exception as e:
-            st.error("❌ Error procesando la respuesta:")
-            st.code(traceback.format_exc(), language="python")
-        finally:
-            st.session_state.esperando_respuesta = False
+                st.chat_message("assistant").markdown(resp)
+                history.append({"prompt": prompt, "respuesta": resp})
+                guardar_historial(user_profiles)
+                st.session_state.messages.append({"role": "assistant", "content": resp})
+            except Exception as e:
+                st.error("❌ Error procesando la respuesta:")
+                st.code(traceback.format_exc(), language="python")
+            finally:
+                st.session_state.esperando_respuesta = False
