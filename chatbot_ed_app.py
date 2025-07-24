@@ -256,20 +256,42 @@ if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"
 
 # --- SECCIÓN DE ADMINISTRADOR (Añadir al final del script) ---
 
-# Cargar el ID de administrador desde los secretos
+# --- SECCIÓN DE ADMINISTRADOR (VERSIÓN CON DEPURACIÓN) ---
+
+# Cargar el ID de administrador desde los secretos de forma segura
 ADMIN_IDCV = st.secrets.get("app_config", {}).get("admin_idcv")
 
 # Comprobar si el usuario actual es un administrador
-if ADMIN_IDCV and st.session_state.user_idcv == ADMIN_IDCV:
+if ADMIN_IDCV and "user_idcv" in st.session_state and st.session_state.user_idcv == ADMIN_IDCV:
+    
     st.sidebar.title("Panel de Administración")
-    st.sidebar.write("Descarga los datos para análisis.")
-
+    
     # Asegurarse de que el fichero cifrado existe antes de ofrecer la descarga
-    if os.path.exists(HIST_ENC):
+    fichero_existe = os.path.exists(HIST_ENC)
+    if fichero_existe:
         with open(HIST_ENC, "rb") as fp:
             st.sidebar.download_button(
-                label="Descargar Historial Cifrado",
+                label="✅ Descargar Historial Cifrado",
                 data=fp,
                 file_name="user_profiles.json.encrypted",
                 mime="application/octet-stream"
             )
+    else:
+        st.sidebar.warning("El fichero de historial aún no ha sido creado. Inicia una conversación para generarlo.")
+
+# --- Caja de depuración para diagnosticar por qué no se muestra el panel ---
+with st.sidebar.expander("🕵️‍♂️ Info de Depuración (solo para pruebas)"):
+    st.write(f"**ID de Admin desde Secrets:** `{ADMIN_IDCV}`")
+    
+    if "user_idcv" in st.session_state:
+        st.write(f"**IDCV del usuario actual:** `{st.session_state.user_idcv}`")
+        
+        # Comprobación explícita para que veas el resultado
+        es_admin = st.session_state.user_idcv == ADMIN_IDCV
+        st.write(f"**¿Coinciden los IDs?** {'✅ Sí' if es_admin else '❌ No'}")
+    else:
+        st.write("`st.session_state.user_idcv` no existe todavía.")
+
+    st.write(f"**Ruta del fichero de historial:** `{HIST_ENC}`")
+    fichero_existe_debug = os.path.exists(HIST_ENC)
+    st.write(f"**¿Existe el fichero de historial?** {'✅ Sí' if fichero_existe_debug else '❌ No'}")
