@@ -101,10 +101,6 @@ def inicializar_vectorstore(api_key: str):
     # Vectorstore FAISS en memoria
     return FAISS.from_texts(["dummy"], embedding=embeddings)  # Puedes cargar documentos reales luego
 
-
-
-
-
 # --- PLANTILLA PERSONALIZADA ---
 prompt_template_str = """
 Eres un tutor de programación experto y tu objetivo es personalizar la asistencia basándote en el historial del estudiante para fomentar la innovación y el pensamiento crítico. No debes dar respuestas directas. Tu método se basa en guiar al estudiante hacia la solución.
@@ -131,9 +127,6 @@ Eres un tutor de programación experto y tu objetivo es personalizar la asistenc
 
 # --- CONFIGURACIÓN STREAMLIT ---
 st.set_page_config(page_title="Tutor ED App", layout="wide")
-
-if "esperando_respuesta" not in st.session_state:
-    st.session_state.esperando_respuesta = False
 
 # --- LOGIN ---
 st.header("🤖 Tutor de Estructuras de Datos")
@@ -166,77 +159,117 @@ else:
 
 # --- CHAT ---
 st.title(f"Hola, {st.session_state.user_name}")
+
+# Inicialización del estado de la sesión
+if "esperando_respuesta" not in st.session_state:
+    st.session_state.esperando_respuesta = False
+if "messages" not in st.session_state:
+    st.session_state.messages = [{"role": "assistant", "content": "¿Sobre qué tema o estructura de datos tienes dudas hoy?"}]
+
+# Carga de perfiles e historial
 user_profiles = cargar_o_crear_historiales()
 uid = st.session_state.user_idcv
 if uid not in user_profiles:
-    user_profiles[uid]={"nombre":st.session_state.user_name,"historial":[]}
-history=user_profiles[uid]["historial"]
+    user_profiles[uid] = {"nombre": st.session_state.user_name, "historial": []}
+history = user_profiles[uid]["historial"]
 
 # Inicializa LLM y vectorstore
-api_key=st.secrets["GOOGLE_API_KEY"]
+api_key = st.secrets["GOOGLE_API_KEY"]
 try:
     vectorstore = inicializar_vectorstore(api_key)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
 except Exception as e:
-    st.error("❌ Error al inicializar el vectorstore:")
+    st.error("❌ Error al inicializar los servicios de IA:")
     st.code(traceback.format_exc(), language="python")
     st.stop()
 
-llm=ChatGoogleGenerativeAI(model="gemini-2.5-pro",google_api_key=api_key,temperature=0.5)
+# Mostrar mensajes previos del historial de la sesión
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-# Mensajes previos\if "messages" not in st.session_state:
-st.session_state.messages=[{"role":"assistant","content":"¿Sobre qué tema o estructura de datos tienes dudas hoy?"}]
-for m in st.session_state.messages:
-    st.chat_message(m["role"]).markdown(m["content"])
+# --- INICIO DE LA LÓGICA DE CHAT MEJORADA ---
 
+# 1. Capturar la entrada del usuario con st.chat_input
+#    Se deshabilita si st.session_state.esperando_respuesta es True.
+if prompt := st.chat_input(
+    "Escribe aquí tu duda...",
+    disabled=st.session_state.esperando_respuesta
+):
+    # Añadir el mensaje del usuario al historial de la sesión y mostrarlo
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-# Entrada usuario
-if "prompt_input" not in st.session_state:
-    st.session_state.prompt_input = ""
+    # Activar el estado de "espera" y redibujar la pantalla para bloquear la entrada
+    st.session_state.esperando_respuesta = True
+    st.rerun()
 
-if st.session_state.esperando_respuesta:
-    st.chat_input("⏳ Esperando respuesta...", disabled=True)
-else:
-    with st.form("chat_form", clear_on_submit=True):
-        prompt = st.text_input(
-            "Tu pregunta:",
-            value=st.session_state.prompt_input,
-            placeholder="Escribe aquí tu duda...",
-            disabled=st.session_state.esperando_respuesta
-        )
-        submitted = st.form_submit_button("Enviar")
+# 2. Procesar la pregunta si estamos en estado de "espera"
+#    Esta condición es clave: solo se ejecuta si estamos esperando respuesta Y el último mensaje fue del usuario.
+#    Esto evita que se vuelva a generar una respuesta si el usuario simplemente recarga la página.
+if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"] == "user":
+    try:
+        # Usar un spinner para dar feedback visual durante el procesamiento
+        with st.spinner("⏳ El tutor está pensando..."):
+            # Obtener la pregunta actual del historial de la sesión
+            current_prompt = st.session_state.messages[-1]["content"]
 
-    if submitted and prompt:
-        # Vaciar input inmediatamente
-        st.session_state.prompt_input = ""
-        st.session_state.esperando_respuesta = True
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        st.chat_message("user").markdown(prompt)
+            # Lógica RAG (igual que en tu código original)
+            docs = vectorstore.similarity_search(current_prompt, k=5)
+            context = "\n\n".join([d.page_content for d in docs])
+            last5 = history[-5:]
+            chat_hist = "\n".join([f"- {h['prompt']} => {h['respuesta']}" for h in last5]) or "El estudiante no tiene interacciones previas."
 
-        try:
-            with st.spinner("⏳ El tutor está pensando..."):
-                docs = vectorstore.similarity_search(prompt, k=5)
-                context = "\n\n".join([d.page_content for d in docs])
-                last5 = history[-5:]
-                chat_hist = "\n".join([f"- {h['prompt']} => {h['respuesta']}" for h in last5]) or "El estudiante no tiene interacciones previas."
+            template = PromptTemplate(
+                template=prompt_template_str,
+                input_variables=["chat_history", "context", "question"]
+            )
+            chain = template | llm
+            
+            # Usamos .invoke() que es la forma estándar y síncrona
+            resp_content = chain.invoke({
+                "chat_history": chat_hist,
+                "context": context,
+                "question": current_prompt
+            }).content
 
-                template = PromptTemplate(
-                    template=prompt_template_str,
-                    input_variables=["chat_history", "context", "question"]
-                )
-                chain = LLMChain(llm=llm, prompt=template)
-                resp = chain.invoke({
-                    "chat_history": chat_hist,
-                    "context": context,
-                    "question": prompt
-                }).get("text")
+        # Mostrar la respuesta del asistente
+        with st.chat_message("assistant"):
+            st.markdown(resp_content)
 
-                st.chat_message("assistant").markdown(resp)
-                history.append({"prompt": prompt, "respuesta": resp})
-                guardar_historial(user_profiles)
-                st.session_state.messages.append({"role": "assistant", "content": resp})
-        except Exception as e:
-            st.error("❌ Error procesando la respuesta:")
-            st.code(traceback.format_exc(), language="python")
-        finally:
-            st.session_state.esperando_respuesta = False
+        # Guardar en el historial persistente y en el de la sesión
+        history.append({"prompt": current_prompt, "respuesta": resp_content})
+        guardar_historial(user_profiles)
+        st.session_state.messages.append({"role": "assistant", "content": resp_content})
 
+    except Exception as e:
+        error_message = f"❌ Lo siento, ocurrió un error al procesar tu pregunta. Por favor, inténtalo de nuevo.\n\nDetalle: {str(e)}"
+        st.error(error_message)
+        st.code(traceback.format_exc(), language="python")
+        st.session_state.messages.append({"role": "assistant", "content": error_message})
+    
+    finally:
+        # Desactivar el estado de "espera" y redibujar para habilitar la entrada
+        st.session_state.esperando_respuesta = False
+        st.rerun()
+
+# --- SECCIÓN DE ADMINISTRADOR (Añadir al final del script) ---
+
+# Cargar el ID de administrador desde los secretos
+ADMIN_IDCV = st.secrets.get("app_config", {}).get("admin_idcv")
+
+# Comprobar si el usuario actual es un administrador
+if ADMIN_IDCV and st.session_state.user_idcv == ADMIN_IDCV:
+    st.sidebar.title("Panel de Administración")
+    st.sidebar.write("Descarga los datos para análisis.")
+
+    # Asegurarse de que el fichero cifrado existe antes de ofrecer la descarga
+    if os.path.exists(HIST_ENC):
+        with open(HIST_ENC, "rb") as fp:
+            st.sidebar.download_button(
+                label="Descargar Historial Cifrado",
+                data=fp,
+                file_name="user_profiles.json.encrypted",
+                mime="application/octet-stream"
+            )
