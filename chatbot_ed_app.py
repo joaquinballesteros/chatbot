@@ -172,7 +172,7 @@ else:
 db = get_firestore_client()
 api_key = st.secrets["GOOGLE_API_KEY"]
 vectorstore = inicializar_vectorstore(api_key)
-llm = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=api_key, temperature=0.5)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
 
 # --- INICIO DEL CHAT ---
 st.title(f"Hola, {st.session_state.user_name}")
