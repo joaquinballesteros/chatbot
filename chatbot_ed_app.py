@@ -35,33 +35,93 @@ USERS_CSV_TMP = os.path.join(TMP_DIR, "users.csv.tmp")
 # MODIFICADO: Ya no usamos un único fichero de historial. Se ha eliminado HIST_ENC y HIST_TMP.
 
 # --- SINCRONIZACIÓN CON GOOGLE DRIVE ---
+# --- SINCRONIZACIÓN CON GOOGLE DRIVE (CON DEPURACIÓN) ---
 def sincronizar_con_drive(fichero_local: str, nombre_fichero_drive: str):
-    """Sube o actualiza un fichero en una carpeta específica de Google Drive."""
+    """Sube o actualiza un fichero en Google Drive con mensajes de depuración."""
+    # DEBUG: Mensaje al iniciar la función
+    st.toast(f"▶️ Iniciando sincronización para: {nombre_fichero_drive}")
     try:
+        # DEBUG: Confirmar que las credenciales se cargan
+        st.info("🕵️‍♂️ DEBUG: Cargando credenciales de GCP desde st.secrets...")
         creds_dict = st.secrets["gcp_service_account"]
         creds = google.oauth2.service_account.Credentials.from_service_account_info(
             creds_dict,
             scopes=['https://www.googleapis.com/auth/drive']
         )
+        st.info("✅ DEBUG: Credenciales cargadas. Construyendo servicio de Drive...")
+        
         service = build('drive', 'v3', credentials=creds)
         folder_id = st.secrets["gdrive"]["folder_id"]
+        st.info(f"✅ DEBUG: Servicio de Drive construido. Buscando en Folder ID: ...{folder_id[-10:]}")
 
+        # DEBUG: Buscar si el fichero ya existe
         query = f"name='{nombre_fichero_drive}' and '{folder_id}' in parents and trashed=false"
+        st.info(f"🕵️‍♂️ DEBUG: Ejecutando query en Drive: {query}")
         response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
         files = response.get('files', [])
+        st.info(f"✅ DEBUG: Búsqueda en Drive completada. Ficheros encontrados: {files}")
 
         media = MediaFileUpload(fichero_local, mimetype='application/octet-stream', resumable=True)
 
         if not files:
+            # DEBUG: Crear fichero si no existe
+            st.warning(f"⚠️ DEBUG: Fichero no encontrado en Drive. Intentando crear '{nombre_fichero_drive}'...")
             file_metadata = {'name': nombre_fichero_drive, 'parents': [folder_id]}
             service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-            st.toast(f"✅ Historial sincronizado con Drive.")
+            st.success(f"✅ ¡ÉXITO! Fichero creado en Drive.")
         else:
+            # DEBUG: Actualizar fichero si existe
             file_id = files[0].get('id')
+            st.warning(f"⚠️ DEBUG: Fichero encontrado con ID: {file_id}. Intentando actualizar...")
             service.files().update(fileId=file_id, media_body=media).execute()
-            st.toast(f"✅ Historial actualizado en Drive.")
+            st.success(f"✅ ¡ÉXITO! Fichero actualizado en Drive.")
+
+    except HttpError as error:
+        # DEBUG: Captura de error de API específico
+        st.error(f"❌ ERROR DE API DE GOOGLE al sincronizar con Drive.")
+        st.exception(error)
     except Exception as e:
-        st.error(f"❌ Error al sincronizar con Drive: {e}")
+        # DEBUG: Captura de cualquier otro error
+        st.error(f"❌ ERROR INESPERADO al sincronizar con Drive.")
+        st.exception(e) # st.exception muestra el error completo y el traceback
+
+# --- GESTIÓN DE HISTORIAL INDIVIDUAL (CON DEPURACIÓN) ---
+
+def save_user_history(user_id: str, new_message: dict):
+    """Añade un mensaje al historial y lo guarda con mensajes de depuración."""
+    # DEBUG: Mensaje al iniciar el guardado
+    st.toast(f"▶️ Guardando mensaje para usuario: {user_id}")
+    enc_path, tmp_path = get_user_filepaths(user_id) # Función sin cambios
+    
+    try:
+        full_history = []
+        if os.path.exists(enc_path):
+            decrypt_file(enc_path, tmp_path)
+            try:
+                with open(tmp_path, 'r', encoding='utf-8') as f:
+                    full_history = json.load(f)
+            except json.JSONDecodeError:
+                full_history = []
+        
+        # DEBUG: Confirmar que el historial se cargó y se añadió el mensaje
+        st.info(f"🕵️‍♂️ DEBUG: Historial cargado con {len(full_history)} mensajes. Añadiendo nuevo mensaje.")
+        full_history.append(new_message)
+        st.info(f"✅ DEBUG: Mensaje añadido. Total ahora: {len(full_history)}.")
+        
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(full_history, f, ensure_ascii=False, indent=4)
+        
+        encrypt_file(tmp_path, enc_path)
+        # DEBUG: Confirmar que el fichero local se ha creado/actualizado
+        st.success(f"✅ DEBUG: Fichero local cifrado guardado en: {enc_path}")
+        
+        # Llamada a la sincronización
+        sincronizar_con_drive(enc_path, os.path.basename(enc_path))
+        
+    except Exception as e:
+        st.error("❌ ERROR INESPERADO durante save_user_history.")
+        st.exception(e)
+
 
 # --- FUNCIONES DE CIFRADO/DESCIFRADO ---
 def decrypt_file(src_path: str, dest_path: str):
@@ -128,27 +188,6 @@ def load_active_user_history(user_id: str):
     except (json.JSONDecodeError, FileNotFoundError):
         return []
 
-def save_user_history(user_id: str, new_message: dict):
-    """Añade un mensaje al historial completo del usuario y lo guarda."""
-    enc_path, tmp_path = get_user_filepaths(user_id)
-    full_history = []
-    
-    # Cargar historial completo (sin filtrar)
-    if os.path.exists(enc_path):
-        decrypt_file(enc_path, tmp_path)
-        try:
-            with open(tmp_path, 'r', encoding='utf-8') as f:
-                full_history = json.load(f)
-        except json.JSONDecodeError:
-            full_history = []
-
-    # Añadir nuevo mensaje y guardar
-    full_history.append(new_message)
-    with open(tmp_path, 'w', encoding='utf-8') as f:
-        json.dump(full_history, f, ensure_ascii=False, indent=4)
-    
-    encrypt_file(tmp_path, enc_path)
-    sincronizar_con_drive(enc_path, os.path.basename(enc_path))
 
 def reset_user_chat(user_id: str):
     """Añade una marca de reseteo al historial del usuario."""
