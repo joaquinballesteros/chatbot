@@ -1,4 +1,4 @@
-# == chatbot_ed_app.py ==
+# == chatbot_ed_app.py (Versión Refactorizada) ==
 import os
 import shutil
 import tempfile
@@ -15,6 +15,11 @@ from create_rag import decrypt_folder
 from langchain_core.documents import Document
 import asyncio
 import traceback
+import google.auth
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from googleapiclient.errors import HttpError
+import datetime
 
 # --- CONSTANTES DE CIFRADO ---
 fernet_key = st.secrets["encryption"]["key"].encode()
@@ -22,32 +27,58 @@ fernet = Fernet(fernet_key)
 
 # --- RUTAS Y CONSTANTES ---
 DATA_DIR = "data"
-TMP_DIR = tempfile.gettempdir()  # Carpeta temporal del sistema
+TMP_DIR = tempfile.gettempdir()
 
 USERS_CSV_ENC = os.path.join(DATA_DIR, "users.csv.encrypted")
 USERS_CSV_TMP = os.path.join(TMP_DIR, "users.csv.tmp")
 
-HIST_ENC = os.path.join(DATA_DIR, "user_profiles.json.encrypted")
-HIST_TMP = os.path.join(TMP_DIR, "user_profiles.json.tmp")
+# MODIFICADO: Ya no usamos un único fichero de historial. Se ha eliminado HIST_ENC y HIST_TMP.
 
-VECTORSTORE_ENC = os.path.join(DATA_DIR, ".RAG.encrypted")
-VECTORSTORE_DIR = os.path.join(DATA_DIR, ".RAG")
+# --- SINCRONIZACIÓN CON GOOGLE DRIVE ---
+def sincronizar_con_drive(fichero_local: str, nombre_fichero_drive: str):
+    """Sube o actualiza un fichero en una carpeta específica de Google Drive."""
+    try:
+        creds_dict = st.secrets["gcp_service_account"]
+        creds = google.oauth2.service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=['https://www.googleapis.com/auth/drive']
+        )
+        service = build('drive', 'v3', credentials=creds)
+        folder_id = st.secrets["gdrive"]["folder_id"]
+
+        query = f"name='{nombre_fichero_drive}' and '{folder_id}' in parents and trashed=false"
+        response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        files = response.get('files', [])
+
+        media = MediaFileUpload(fichero_local, mimetype='application/octet-stream', resumable=True)
+
+        if not files:
+            file_metadata = {'name': nombre_fichero_drive, 'parents': [folder_id]}
+            service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+            st.toast(f"✅ Historial sincronizado con Drive.")
+        else:
+            file_id = files[0].get('id')
+            service.files().update(fileId=file_id, media_body=media).execute()
+            st.toast(f"✅ Historial actualizado en Drive.")
+    except Exception as e:
+        st.error(f"❌ Error al sincronizar con Drive: {e}")
 
 # --- FUNCIONES DE CIFRADO/DESCIFRADO ---
-
 def decrypt_file(src_path: str, dest_path: str):
-    token = open(src_path, 'rb').read()
+    if not os.path.exists(src_path): return
+    with open(src_path, 'rb') as f:
+        token = f.read()
     data = fernet.decrypt(token)
     with open(dest_path, 'wb') as f:
         f.write(data)
 
-
 def encrypt_file(src_path: str, dest_path: str):
-    data = open(src_path, 'rb').read()
+    with open(src_path, 'rb') as f:
+        data = f.read()
     token = fernet.encrypt(data)
     with open(dest_path, 'wb') as f:
         f.write(token)
-    os.remove(src_path)
+    if os.path.exists(src_path): os.remove(src_path)
 
 # --- CARGA DE USUARIOS ---
 @st.cache_data(ttl=3600)
@@ -56,93 +87,117 @@ def cargar_datos_estudiantes():
         decrypt_file(USERS_CSV_ENC, USERS_CSV_TMP)
     df = pd.read_csv(USERS_CSV_TMP, dtype=str)
     df['IDCV'] = df['IDCV'].str.strip()
-    os.remove(USERS_CSV_TMP)  # Limpieza
+    if os.path.exists(USERS_CSV_TMP): os.remove(USERS_CSV_TMP)
     return df
 
-# --- GESTIÓN DE HISTORIAL CIFRADO ---
-def cargar_o_crear_historiales():
-    if os.path.exists(HIST_ENC):
-        decrypt_file(HIST_ENC, HIST_TMP)
-    if not os.path.exists(HIST_TMP):
-        with open(HIST_TMP, 'w', encoding='utf-8') as f:
-            json.dump({}, f)
+# --- NUEVO: GESTIÓN DE HISTORIAL INDIVIDUAL ---
+
+def get_user_filepaths(user_id: str):
+    """Devuelve las rutas de los ficheros cifrado y temporal para un usuario."""
+    safe_id = "".join(c for c in user_id if c.isalnum())
+    filename_base = f"history_{safe_id}.json"
+    enc_path = os.path.join(DATA_DIR, f"{filename_base}.encrypted")
+    tmp_path = os.path.join(TMP_DIR, filename_base)
+    return enc_path, tmp_path
+
+def load_active_user_history(user_id: str):
+    """
+    Carga el historial completo de un usuario, pero solo devuelve la parte
+    activa (mensajes después del último reseteo).
+    """
+    enc_path, tmp_path = get_user_filepaths(user_id)
+    if not os.path.exists(enc_path):
+        return []
 
     try:
-        with open(HIST_TMP, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        st.error(f"❌ Error cargando historial: {e}")
-        return {}
+        decrypt_file(enc_path, tmp_path)
+        with open(tmp_path, 'r', encoding='utf-8') as f:
+            full_history = json.load(f)
+        if os.path.exists(tmp_path): os.remove(tmp_path)
 
+        # Buscar el índice del último reseteo
+        last_reset_index = -1
+        for i, msg in enumerate(reversed(full_history)):
+            if msg.get("role") == "system" and "CHAT RESETEADO" in msg.get("content", ""):
+                last_reset_index = len(full_history) - 1 - i
+                break
+        
+        # Devolver solo la parte activa del historial
+        return full_history[last_reset_index + 1:] if last_reset_index != -1 else full_history
 
-def guardar_historial(datos: dict):
-    try:
-        with open(HIST_TMP, 'w', encoding='utf-8') as f:
-            json.dump(datos, f, ensure_ascii=False, indent=4)
-        encrypt_file(HIST_TMP, HIST_ENC)
-    except Exception as e:
-        st.error("❌ Error al guardar el historial")
-        st.code(traceback.format_exc(), language="python")
+    except (json.JSONDecodeError, FileNotFoundError):
+        return []
 
+def save_user_history(user_id: str, new_message: dict):
+    """Añade un mensaje al historial completo del usuario y lo guarda."""
+    enc_path, tmp_path = get_user_filepaths(user_id)
+    full_history = []
+    
+    # Cargar historial completo (sin filtrar)
+    if os.path.exists(enc_path):
+        decrypt_file(enc_path, tmp_path)
+        try:
+            with open(tmp_path, 'r', encoding='utf-8') as f:
+                full_history = json.load(f)
+        except json.JSONDecodeError:
+            full_history = []
+
+    # Añadir nuevo mensaje y guardar
+    full_history.append(new_message)
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        json.dump(full_history, f, ensure_ascii=False, indent=4)
+    
+    encrypt_file(tmp_path, enc_path)
+    sincronizar_con_drive(enc_path, os.path.basename(enc_path))
+
+def reset_user_chat(user_id: str):
+    """Añade una marca de reseteo al historial del usuario."""
+    reset_message = {
+        "role": "system",
+        "content": f"--- CHAT RESETEADO POR EL USUARIO A LAS {datetime.datetime.now().isoformat()} ---"
+    }
+    save_user_history(user_id, reset_message)
+    # Limpia el estado de la sesión actual para reflejar el reseteo en la UI
+    st.session_state.messages = []
 
 
 @st.cache_resource
 def inicializar_vectorstore(api_key: str):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.set_event_loop(asyncio.new_event_loop())
+    try: asyncio.get_running_loop()
+    except RuntimeError: asyncio.set_event_loop(asyncio.new_event_loop())
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+    return FAISS.from_texts(["dummy"], embedding=embeddings)
 
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/embedding-001",
-        google_api_key=api_key
-    )
-
-    # Vectorstore FAISS en memoria
-    return FAISS.from_texts(["dummy"], embedding=embeddings)  # Puedes cargar documentos reales luego
-
-# --- PLANTILLA PERSONALIZADA ---
+# --- PLANTILLA (Sin cambios) ---
 prompt_template_str = """
 Eres un tutor de programación experto y tu objetivo es personalizar la asistencia basándote en el historial del estudiante para fomentar la innovación y el pensamiento crítico. No debes dar respuestas directas. Tu método se basa en guiar al estudiante hacia la solución.
-
 **Contexto del Historial del Estudiante:**
 {chat_history}
-
 **Documentos de la Asignatura:**
 {context}
-
 **Reglas Estrictas de Interacción:**
 1. Usa el Método Socrático: nunca des la respuesta directa. Guía con preguntas.
 2. Adapta la dificultad según el historial.
 3. Fomenta la autoexplicación.
 4. Da retroalimentación constructiva y personalizada.
 5. Estimula la curiosidad: termina con preguntas abiertas.
-
 **Implementación en Java o C según indique el estudiante.**
-
 **Pregunta Actual:**
 {question}
-
 **Respuesta del Tutor:**"""
 
 # --- CONFIGURACIÓN STREAMLIT ---
 st.set_page_config(page_title="Tutor ED App", layout="wide")
 
-# --- LOGIN ---
+# --- LOGIN (Sin cambios) ---
 st.header("🤖 Tutor de Estructuras de Datos")
-
 df_estudiantes = cargar_datos_estudiantes()
-
-# Obtener parámetros de la URL
 params = st.query_params
 idcv_param = st.query_params.get("idcv", [None])
 nombre_param = st.query_params.get("nombre", [None])
-
-# Extraer el valor real de los parámetros (primer elemento de la lista)
 idcv_value = idcv_param[0] if isinstance(idcv_param, list) else idcv_param
 nombre_value = nombre_param[0] if isinstance(nombre_param, list) else nombre_param
 
-# Validación: solo si vienen por GET y son válidos
 if idcv_value and nombre_value:
     user = df_estudiantes[df_estudiantes['IDCV'] == idcv_value]
     if not user.empty:
@@ -150,28 +205,32 @@ if idcv_value and nombre_value:
         st.session_state.user_idcv = idcv_value
         st.session_state.user_name = user.iloc[0]['Nombre']
     else:
-        st.error(f"❌ Este usuario no tiene permiso para usar el tutor.\n\nPor favor, contacta con el profesor de la asignatura. \nIDCV recibido: {idcv_value}\nNombre recibido: {nombre_value}")
+        st.error(f"❌ Este usuario no tiene permiso para usar el tutor. IDCV: {idcv_value}, Nombre: {nombre_value}")
         st.stop()
 else:
-    st.error(f"❌ Acceso no autorizado. Faltan credenciales válidas en la URL.\n\nPor favor, contacta con el profesor de la asignatura.")
+    st.error("❌ Acceso no autorizado. Faltan credenciales válidas en la URL.")
     st.stop()
 
-
-# --- CHAT ---
+# --- INICIO DEL CHAT ---
 st.title(f"Hola, {st.session_state.user_name}")
+
+# MODIFICADO: Barra lateral con botón de reseteo para el usuario
+with st.sidebar:
+    st.header("Opciones de Chat")
+    if st.button("🗑️ Resetear Chat", help="Inicia una nueva conversación. Tu historial anterior se guardará pero no se usará como contexto."):
+        reset_user_chat(st.session_state.user_idcv)
+        st.rerun() # Recarga la app para mostrar el chat vacío
 
 # Inicialización del estado de la sesión
 if "esperando_respuesta" not in st.session_state:
     st.session_state.esperando_respuesta = False
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "¿Sobre qué tema o estructura de datos tienes dudas hoy?"}]
+    # MODIFICADO: Carga el historial activo del usuario específico
+    st.session_state.messages = load_active_user_history(st.session_state.user_idcv)
+    # Añadir mensaje de bienvenida si el historial está vacío
+    if not st.session_state.messages:
+        st.session_state.messages.append({"role": "assistant", "content": "¿Sobre qué tema o estructura de datos tienes dudas hoy?"})
 
-# Carga de perfiles e historial
-user_profiles = cargar_o_crear_historiales()
-uid = st.session_state.user_idcv
-if uid not in user_profiles:
-    user_profiles[uid] = {"nombre": st.session_state.user_name, "historial": []}
-history = user_profiles[uid]["historial"]
 
 # Inicializa LLM y vectorstore
 api_key = st.secrets["GOOGLE_API_KEY"]
@@ -179,119 +238,65 @@ try:
     vectorstore = inicializar_vectorstore(api_key)
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
 except Exception as e:
-    st.error("❌ Error al inicializar los servicios de IA:")
-    st.code(traceback.format_exc(), language="python")
+    st.error(f"❌ Error al inicializar los servicios de IA: {e}")
     st.stop()
 
 # Mostrar mensajes previos del historial de la sesión
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    # No mostrar los mensajes del sistema (como los de reseteo)
+    if message["role"] != "system":
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-# --- INICIO DE LA LÓGICA DE CHAT MEJORADA ---
-
-# 1. Capturar la entrada del usuario con st.chat_input
-#    Se deshabilita si st.session_state.esperando_respuesta es True.
-if prompt := st.chat_input(
-    "Escribe aquí tu duda...",
-    disabled=st.session_state.esperando_respuesta
-):
-    # Añadir el mensaje del usuario al historial de la sesión y mostrarlo
-    st.session_state.messages.append({"role": "user", "content": prompt})
+# Lógica de chat con estado de espera (sin cambios funcionales, solo en el guardado)
+if prompt := st.chat_input("Escribe aquí tu duda...", disabled=st.session_state.esperando_respuesta):
+    user_message = {"role": "user", "content": prompt}
+    st.session_state.messages.append(user_message)
+    save_user_history(st.session_state.user_idcv, user_message) # Guardar inmediatamente
     with st.chat_message("user"):
         st.markdown(prompt)
-
-    # Activar el estado de "espera" y redibujar la pantalla para bloquear la entrada
     st.session_state.esperando_respuesta = True
     st.rerun()
 
-# 2. Procesar la pregunta si estamos en estado de "espera"
-#    Esta condición es clave: solo se ejecuta si estamos esperando respuesta Y el último mensaje fue del usuario.
-#    Esto evita que se vuelva a generar una respuesta si el usuario simplemente recarga la página.
 if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"] == "user":
     try:
-        # Usar un spinner para dar feedback visual durante el procesamiento
         with st.spinner("⏳ El tutor está pensando..."):
-            # Obtener la pregunta actual del historial de la sesión
             current_prompt = st.session_state.messages[-1]["content"]
 
-            # Lógica RAG (igual que en tu código original)
+            # MODIFICADO: Carga el historial activo para pasarlo al LLM
+            history_for_prompt = load_active_user_history(st.session_state.user_idcv)
+            
             docs = vectorstore.similarity_search(current_prompt, k=5)
             context = "\n\n".join([d.page_content for d in docs])
-            last5 = history[-5:]
-            chat_hist = "\n".join([f"- {h['prompt']} => {h['respuesta']}" for h in last5]) or "El estudiante no tiene interacciones previas."
+            last5 = history_for_prompt[-6:-1] # Usar los 5 mensajes previos al actual
+            chat_hist = "\n".join([f"- Pregunta: {h['content']}" if h['role'] == 'user' else f"- Respuesta: {h['content']}" for h in last5]) or "El estudiante no tiene interacciones previas."
 
-            template = PromptTemplate(
-                template=prompt_template_str,
-                input_variables=["chat_history", "context", "question"]
-            )
+            template = PromptTemplate(template=prompt_template_str, input_variables=["chat_history", "context", "question"])
             chain = template | llm
             
-            # Usamos .invoke() que es la forma estándar y síncrona
             resp_content = chain.invoke({
                 "chat_history": chat_hist,
                 "context": context,
                 "question": current_prompt
             }).content
 
-        # Mostrar la respuesta del asistente
         with st.chat_message("assistant"):
             st.markdown(resp_content)
 
-        # Guardar en el historial persistente y en el de la sesión
-        history.append({"prompt": current_prompt, "respuesta": resp_content})
-        guardar_historial(user_profiles)
-        st.session_state.messages.append({"role": "assistant", "content": resp_content})
+        assistant_message = {"role": "assistant", "content": resp_content}
+        st.session_state.messages.append(assistant_message)
+        save_user_history(st.session_state.user_idcv, assistant_message) # Guardar respuesta
 
     except Exception as e:
-        error_message = f"❌ Lo siento, ocurrió un error al procesar tu pregunta. Por favor, inténtalo de nuevo.\n\nDetalle: {str(e)}"
+        error_message = f"❌ Lo siento, ocurrió un error. Por favor, inténtalo de nuevo.\n\nDetalle: {str(e)}"
         st.error(error_message)
-        st.code(traceback.format_exc(), language="python")
-        st.session_state.messages.append({"role": "assistant", "content": error_message})
+        assistant_message = {"role": "assistant", "content": error_message}
+        st.session_state.messages.append(assistant_message)
+        save_user_history(st.session_state.user_idcv, assistant_message)
     
     finally:
-        # Desactivar el estado de "espera" y redibujar para habilitar la entrada
         st.session_state.esperando_respuesta = False
         st.rerun()
 
-# --- SECCIÓN DE ADMINISTRADOR (Añadir al final del script) ---
-
-# --- SECCIÓN DE ADMINISTRADOR (VERSIÓN CON DEPURACIÓN) ---
-
-# Cargar el ID de administrador desde los secretos de forma segura
-ADMIN_IDCV = st.secrets.get("app_config", {}).get("admin_idcv")
-
-# Comprobar si el usuario actual es un administrador
-if ADMIN_IDCV and "user_idcv" in st.session_state and st.session_state.user_idcv == ADMIN_IDCV:
-    
-    st.sidebar.title("Panel de Administración")
-    
-    # Asegurarse de que el fichero cifrado existe antes de ofrecer la descarga
-    fichero_existe = os.path.exists(HIST_ENC)
-    if fichero_existe:
-        with open(HIST_ENC, "rb") as fp:
-            st.sidebar.download_button(
-                label="✅ Descargar Historial Cifrado",
-                data=fp,
-                file_name="user_profiles.json.encrypted",
-                mime="application/octet-stream"
-            )
-    else:
-        st.sidebar.warning("El fichero de historial aún no ha sido creado. Inicia una conversación para generarlo.")
-
-# --- Caja de depuración para diagnosticar por qué no se muestra el panel ---
-with st.sidebar.expander("🕵️‍♂️ Info de Depuración (solo para pruebas)"):
-    st.write(f"**ID de Admin desde Secrets:** `{ADMIN_IDCV}`")
-    
-    if "user_idcv" in st.session_state:
-        st.write(f"**IDCV del usuario actual:** `{st.session_state.user_idcv}`")
-        
-        # Comprobación explícita para que veas el resultado
-        es_admin = st.session_state.user_idcv == ADMIN_IDCV
-        st.write(f"**¿Coinciden los IDs?** {'✅ Sí' if es_admin else '❌ No'}")
-    else:
-        st.write("`st.session_state.user_idcv` no existe todavía.")
-
-    st.write(f"**Ruta del fichero de historial:** `{HIST_ENC}`")
-    fichero_existe_debug = os.path.exists(HIST_ENC)
-    st.write(f"**¿Existe el fichero de historial?** {'✅ Sí' if fichero_existe_debug else '❌ No'}")
+# --- ELIMINADO: SECCIÓN DE ADMINISTRADOR ---
+# Todo el bloque de código del panel de administrador, incluido el de depuración, ha sido eliminado.
