@@ -108,8 +108,26 @@ def cargar_datos_estudiantes():
     return df
 
 @st.cache_resource
+# Reemplaza tu función actual con esta versión
+
+@st.cache_resource
 def inicializar_vectorstore(api_key: str):
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+    """
+    Inicializa el vectorstore de FAISS con los embeddings de Google,
+    asegurando que exista un bucle de eventos asyncio.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:  # 'RuntimeError: There is no current event loop...'
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    # --- FIN DE LA CORRECCIÓN ---
+
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/embedding-001",
+        google_api_key=api_key
+    )
+    
+    # Vectorstore FAISS en memoria
     return FAISS.from_texts(["dummy"], embedding=embeddings)
 
 # --- PLANTILLA DE PROMPT (SIN CAMBIOS) ---
