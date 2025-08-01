@@ -273,6 +273,25 @@ if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"
 
             template = PromptTemplate(template=prompt_template_str, input_variables=["chat_history", "context", "question"])
             chain = template | llm
+
+
+
+
+
+            # --- INICIO DE BLOQUE DE DEPURACIÓN ---
+            with st.expander("🕵️‍♂️ Ver datos enviados al modelo"):
+                st.info("Contexto extraído de los documentos (RAG):")
+                st.text(context)
+                st.info("Historial de chat usado como contexto:")
+                st.text(chat_hist)
+                st.info("Pregunta actual:")
+                st.text(current_prompt)
+            # --- FIN DE BLOQUE DE DEPURACIÓN ---
+
+
+
+
+
             
             resp_content = chain.invoke({
                 "chat_history": chat_hist,
