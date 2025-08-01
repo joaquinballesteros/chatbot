@@ -14,6 +14,8 @@ import traceback
 import google.oauth2.service_account
 from google.cloud import firestore
 
+import asyncio
+
 # --- RUTAS Y CONSTANTES (SIMPLIFICADO) ---
 # Ya no necesitamos directorios de datos para el historial
 TMP_DIR = os.path.join(os.getcwd(), "tmp") # Usamos un directorio temporal local si es necesario
