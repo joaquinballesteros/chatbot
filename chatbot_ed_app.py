@@ -38,53 +38,50 @@ USERS_CSV_TMP = os.path.join(TMP_DIR, "users.csv.tmp")
 # --- SINCRONIZACIÓN CON GOOGLE DRIVE (CON DEPURACIÓN) ---
 def sincronizar_con_drive(fichero_local: str, nombre_fichero_drive: str):
     """Sube o actualiza un fichero en Google Drive con mensajes de depuración."""
-    # DEBUG: Mensaje al iniciar la función
     st.toast(f"▶️ Iniciando sincronización para: {nombre_fichero_drive}")
     try:
-        # DEBUG: Confirmar que las credenciales se cargan
-        st.info("🕵️‍♂️ DEBUG: Cargando credenciales de GCP desde st.secrets...")
+        st.info("🕵️‍♂️ DEBUG: Cargando credenciales de GCP...")
         creds_dict = st.secrets["gcp_service_account"]
         creds = google.oauth2.service_account.Credentials.from_service_account_info(
             creds_dict,
             scopes=['https://www.googleapis.com/auth/drive']
         )
-        st.info("✅ DEBUG: Credenciales cargadas. Construyendo servicio de Drive...")
         
         service = build('drive', 'v3', credentials=creds)
         folder_id = st.secrets["gdrive"]["folder_id"]
-        st.info(f"✅ DEBUG: Servicio de Drive construido. Buscando en Folder ID: ...{folder_id[-10:]}")
 
-        # DEBUG: Buscar si el fichero ya existe
+        # --- ¡¡NUEVA LÍNEA DE DEPURACIÓN CRÍTICA!! ---
+        # Esto nos mostrará en una caja roja el ID que la app está usando realmente.
+        st.error(f"🚨 VERIFICACIÓN FINAL: El código está intentando usar este ID de destino: --> {folder_id} <--")
+        # ----------------------------------------------
+        
         query = f"name='{nombre_fichero_drive}' and '{folder_id}' in parents and trashed=false"
-        st.info(f"🕵️‍♂️ DEBUG: Ejecutando query en Drive: {query}")
+        st.info(f"🕵️‍♂️ DEBUG: Ejecutando query en Drive...")
         response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
         files = response.get('files', [])
-        st.info(f"✅ DEBUG: Búsqueda en Drive completada. Ficheros encontrados: {files}")
+        st.info(f"✅ DEBUG: Búsqueda en Drive completada.")
 
         media = MediaFileUpload(fichero_local, mimetype='application/octet-stream', resumable=True)
 
         if not files:
-            # DEBUG: Crear fichero si no existe
-            st.warning(f"⚠️ DEBUG: Fichero no encontrado en Drive. Intentando crear '{nombre_fichero_drive}'...")
+            st.warning(f"⚠️ DEBUG: Fichero no encontrado en Drive. Intentando crear...")
             file_metadata = {'name': nombre_fichero_drive, 'parents': [folder_id]}
             service.files().create(body=file_metadata, media_body=media, fields='id').execute()
             st.success(f"✅ ¡ÉXITO! Fichero creado en Drive.")
         else:
-            # DEBUG: Actualizar fichero si existe
             file_id = files[0].get('id')
-            st.warning(f"⚠️ DEBUG: Fichero encontrado con ID: {file_id}. Intentando actualizar...")
+            st.warning(f"⚠️ DEBUG: Fichero encontrado. Intentando actualizar...")
             service.files().update(fileId=file_id, media_body=media).execute()
             st.success(f"✅ ¡ÉXITO! Fichero actualizado en Drive.")
 
     except HttpError as error:
-        # DEBUG: Captura de error de API específico
         st.error(f"❌ ERROR DE API DE GOOGLE al sincronizar con Drive.")
         st.exception(error)
     except Exception as e:
-        # DEBUG: Captura de cualquier otro error
         st.error(f"❌ ERROR INESPERADO al sincronizar con Drive.")
-        st.exception(e) # st.exception muestra el error completo y el traceback
+        st.exception(e)
 
+        
 # --- GESTIÓN DE HISTORIAL INDIVIDUAL (CON DEPURACIÓN) ---
 
 def save_user_history(user_id: str, new_message: dict):
