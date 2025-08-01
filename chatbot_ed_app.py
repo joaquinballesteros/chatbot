@@ -138,7 +138,7 @@ Eres un tutor de programación experto y tu objetivo es personalizar la asistenc
 
 # --- CONFIGURACIÓN E INICIO DE LA APP ---
 st.set_page_config(page_title="Tutor ED App", layout="wide")
-st.header("🤖 Tutor de Estructuras de Datos")
+st.header("🤖 Tutor de Estructuras de Datos 2526")
 
 # --- LOGIN ---
 df_estudiantes = cargar_datos_estudiantes()
