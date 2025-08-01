@@ -80,14 +80,33 @@ def cargar_datos_estudiantes():
     os.remove(USERS_CSV_PATH_TMP)
     return df
 
+
 @st.cache_resource
 def inicializar_vectorstore(api_key: str):
+    """
+    Carga el índice FAISS pre-construido desde el disco.
+    """
+    INDEX_PATH = "faiss_index" # La misma ruta que usamos al guardar
+
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
-    return FAISS.from_texts(["dummy"], embedding=embeddings)
+
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/embedding-001",
+        google_api_key=api_key
+    )
+    
+    # Cargar el vectorstore desde el disco
+    # allow_dangerous_deserialization es necesario para cargar el índice de FAISS
+    vectorstore = FAISS.load_local(
+        INDEX_PATH, 
+        embeddings, 
+        allow_dangerous_deserialization=True 
+    )
+    
+    return vectorstore
 
 # --- PLANTILLA DE PROMPT ---
 prompt_template_str = """
