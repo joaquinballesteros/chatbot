@@ -1,4 +1,4 @@
-# == chatbot_ed_app.py (Versión Final con SelfQueryRetriever Explícito) ==
+# == chatbot_ed_app.py (Versión Final con Corrección de SelfQueryRetriever) ==
 import os
 import streamlit as st
 import pandas as pd
@@ -12,8 +12,12 @@ from langchain_community.vectorstores import FAISS
 from langchain.prompts import PromptTemplate
 from langchain.chains.query_constructor.base import AttributeInfo
 from langchain.retrievers.self_query.base import SelfQueryRetriever
-# Importaciones explícitas para evitar el problema de Chroma/sqlite3
-from langchain_community.query_constructors.faiss import FAISSQueryConstructor
+# --- NUEVAS IMPORTACIONES PARA LA CONSTRUCCIÓN MANUAL ---
+from langchain.chains.query_constructor.base import (
+    StructuredQueryOutputParser,
+    get_query_constructor_prompt,
+)
+from langchain_core.runnables import RunnableParallel, RunnablePassthrough
 
 # --- LIBRERÍAS DE FIREBASE ---
 import google.oauth2.service_account
@@ -92,13 +96,23 @@ def inicializar_vectorstore_and_retriever(_llm, api_key: str):
     ]
     document_content_description = "Apuntes y diapositivas de la asignatura de Estructuras de Datos."
     
-    # Construcción explícita del traductor y retriever para evitar la importación de Chroma
-    structured_query_translator = FAISSQueryConstructor().get_translator()
+    # --- CONSTRUCCIÓN MANUAL Y EXPLÍCITA DEL RETRIEVER ---
+    # 1. Crear el prompt para construir la consulta
+    prompt = get_query_constructor_prompt(
+        document_content_description,
+        metadata_field_info,
+    )
+    
+    # 2. Definir el parser de salida, especificando los comparadores que FAISS soporta
+    output_parser = StructuredQueryOutputParser.from_components()
+    
+    # 3. Construir la cadena (chain) que convierte la pregunta del usuario en una consulta estructurada
+    query_constructor = prompt | _llm | output_parser
+    
+    # 4. Construir el retriever final con la cadena de consulta explícita
     retriever = SelfQueryRetriever(
-        query_constructor=_llm | structured_query_translator,
+        query_constructor=query_constructor,
         vectorstore=vectorstore,
-        document_content_description=document_content_description,
-        metadata_field_info=metadata_field_info,
         verbose=True
     )
     
@@ -135,7 +149,7 @@ else:
 # --- INICIALIZACIÓN DE SERVICIOS ---
 db = get_firestore_client()
 api_key = st.secrets["GOOGLE_API_KEY"]
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", google_api_key=api_key, temperature=0.5)
 retriever = inicializar_vectorstore_and_retriever(llm, api_key)
 
 if retriever is None:
