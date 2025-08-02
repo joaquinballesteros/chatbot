@@ -135,23 +135,64 @@ st.header("🤖 Tutor de Estructuras de Datos (RAG Avanzado)")
 # --- LOGIN ---
 try:
     df_estudiantes = cargar_datos_estudiantes()
-    params = st.query_params
-    idcv_value = params.get("idcv", [None])[0]
-    nombre_value = params.get("nombre", [None])[0]
+    
+    # --- INICIO DE LA CORRECCIÓN ---
+    # La forma correcta y segura de obtener los parámetros
+    idcv_value = st.query_params.get("idcv")
+    nombre_value = st.query_params.get("nombre")
+    # --- FIN DE LA CORRECCIÓN ---
+
     if idcv_value and nombre_value:
-        user_data = df_estudiantes[df_estudiantes['IDCV'] == idcv_value]
+        # Buscamos el IDCV en el DataFrame (asegurándonos de que ambos son strings)
+        user_data = df_estudiantes[df_estudiantes['IDCV'] == str(idcv_value)]
+        
         if not user_data.empty:
             st.session_state.authenticated = True
             st.session_state.user_idcv = idcv_value
             st.session_state.user_name = user_data.iloc[0]['Nombre']
         else:
-            st.error(f"❌ Usuario no autorizado. IDCV: {idcv_value}")
+            # Mostramos el IDCV que realmente se está usando para depurar
+            st.error(f"❌ Usuario no autorizado. IDCV recibido: {idcv_value}")
             st.stop()
     else:
-        st.error("❌ Acceso no autorizado. Faltan credenciales.")
+        st.error("❌ Acceso no autorizado. Faltan los parámetros 'idcv' y 'nombre' en la URL.")
         st.stop()
 except FileNotFoundError:
     st.error(f"Error crítico: El fichero de usuarios '{USERS_CSV_PATH_ENC}' no se encontró.")
+    st.stop()
+except Exception as e:
+    st.error(f"Ocurrió un error inesperado durante el login: {e}")
+    st.code(traceback.format_exc())
+    st.stop()try:
+    df_estudiantes = cargar_datos_estudiantes()
+    
+    # --- INICIO DE LA CORRECCIÓN ---
+    # La forma correcta y segura de obtener los parámetros
+    idcv_value = st.query_params.get("idcv")
+    nombre_value = st.query_params.get("nombre")
+    # --- FIN DE LA CORRECCIÓN ---
+
+    if idcv_value and nombre_value:
+        # Buscamos el IDCV en el DataFrame (asegurándonos de que ambos son strings)
+        user_data = df_estudiantes[df_estudiantes['IDCV'] == str(idcv_value)]
+        
+        if not user_data.empty:
+            st.session_state.authenticated = True
+            st.session_state.user_idcv = idcv_value
+            st.session_state.user_name = user_data.iloc[0]['Nombre']
+        else:
+            # Mostramos el IDCV que realmente se está usando para depurar
+            st.error(f"❌ Usuario no autorizado. IDCV recibido: {idcv_value}")
+            st.stop()
+    else:
+        st.error("❌ Acceso no autorizado. Faltan los parámetros 'idcv' y 'nombre' en la URL.")
+        st.stop()
+except FileNotFoundError:
+    st.error(f"Error crítico: El fichero de usuarios '{USERS_CSV_PATH_ENC}' no se encontró.")
+    st.stop()
+except Exception as e:
+    st.error(f"Ocurrió un error inesperado durante el login: {e}")
+    st.code(traceback.format_exc())
     st.stop()
 
 # --- INICIALIZACIÓN DE SERVICIOS ---
@@ -160,7 +201,7 @@ api_key = st.secrets["GOOGLE_API_KEY"]
 vectorstore = inicializar_vectorstore(api_key)
 if vectorstore is None:
     st.stop()
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", google_api_key=api_key, temperature=0.5)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
 
 # --- INICIO DEL CHAT ---
 st.title(f"Hola, {st.session_state.user_name}")
