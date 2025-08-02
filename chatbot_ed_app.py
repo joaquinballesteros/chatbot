@@ -1,11 +1,10 @@
-# == chatbot_ed_app.py (Versión Final con RAG en Dos Pasos) ==
+# == chatbot_ed_app.py (Versión Final v3 - RAG en Dos Pasos y Gemini 1.5 Pro) ==
 import os
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 import asyncio
 import traceback
-import re
 
 # --- LIBRERÍAS DE IA (LangChain y Google) ---
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -83,43 +82,30 @@ def inicializar_vectorstore(api_key: str):
     return vectorstore
 
 # --- LÓGICA DE RAG EN DOS PASOS ---
-
-# Mapeo de ficheros a temas (igual que en create_and_save_index.py)
 file_topic_mapping = {
     "tema1_introduccion.pdf": "Introducción a algoritmos y estructuras de datos",
     "tema2_pilas_y_colas.pdf": "Pilas (Stacks) y Colas (Queues) en Java",
     "tema3_arboles.pdf": "Árboles binarios, BST y árboles AVL",
     "tema4_implementacion_C.pdf": "Implementación de estructuras de datos en el lenguaje C"
 }
-
-# Creamos la descripción para el LLM "Planificador"
 document_list_description = "\n".join([f"- `{os.path.join('documentos_pdf', key)}`: {value}" for key, value in file_topic_mapping.items()])
-
 source_selection_prompt_template = f"""
-Eres un asistente experto en clasificar preguntas de estudiantes.
-Tu tarea es determinar cuál de los siguientes documentos es el más relevante para responder a la pregunta del usuario.
+Eres un asistente experto en clasificar preguntas. Tu tarea es determinar cuál de los siguientes documentos es el más relevante para responder a la pregunta del usuario.
 
 Aquí tienes la lista de documentos disponibles y de qué trata cada uno:
 {document_list_description}
 
 Pregunta del usuario: "{{user_query}}"
 
-Analiza la pregunta y responde ÚNICA Y EXCLUSIVAMENTE con la ruta del fichero más relevante de la lista.
-Si ningún fichero parece directamente relevante, responde con "NONE".
-
+Analiza la pregunta y responde ÚNICA Y EXCLUSIVAMENTE con la ruta del fichero más relevante de la lista. Si ningún fichero parece directamente relevante, responde con "NONE".
 Respuesta:
 """
 
 def get_relevant_source_file(llm, user_query):
-    """Paso 1: El Planificador. Pregunta al LLM qué fichero usar."""
     prompt = PromptTemplate.from_template(source_selection_prompt_template)
     chain = prompt | llm
     response = chain.invoke({"user_query": user_query})
-    
-    # Limpiamos la respuesta del LLM para asegurarnos de que es solo la ruta
     content = response.content.strip().replace("`", "")
-    
-    # Verificamos si la respuesta es una ruta de fichero válida
     if content in [os.path.join('documentos_pdf', key) for key in file_topic_mapping.keys()]:
         return content
     return None
@@ -135,23 +121,16 @@ st.header("🤖 Tutor de Estructuras de Datos (RAG Avanzado)")
 # --- LOGIN ---
 try:
     df_estudiantes = cargar_datos_estudiantes()
-    
-    # --- INICIO DE LA CORRECCIÓN ---
-    # La forma correcta y segura de obtener los parámetros
     idcv_value = st.query_params.get("idcv")
     nombre_value = st.query_params.get("nombre")
-    # --- FIN DE LA CORRECCIÓN ---
 
     if idcv_value and nombre_value:
-        # Buscamos el IDCV en el DataFrame (asegurándonos de que ambos son strings)
         user_data = df_estudiantes[df_estudiantes['IDCV'] == str(idcv_value)]
-        
         if not user_data.empty:
             st.session_state.authenticated = True
             st.session_state.user_idcv = idcv_value
             st.session_state.user_name = user_data.iloc[0]['Nombre']
         else:
-            # Mostramos el IDCV que realmente se está usando para depurar
             st.error(f"❌ Usuario no autorizado. IDCV recibido: {idcv_value}")
             st.stop()
     else:
@@ -171,7 +150,8 @@ api_key = st.secrets["GOOGLE_API_KEY"]
 vectorstore = inicializar_vectorstore(api_key)
 if vectorstore is None:
     st.stop()
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
+# --- MODELO ACTUALIZADO ---
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", google_api_key=api_key, temperature=0.5)
 
 # --- INICIO DEL CHAT ---
 st.title(f"Hola, {st.session_state.user_name}")
