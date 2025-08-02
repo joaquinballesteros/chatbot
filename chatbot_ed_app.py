@@ -1,4 +1,4 @@
-# == chatbot_ed_app.py (Versión Final v2 con Gemini 1.5 Pro y Corrección de Rutas) ==
+
 import os
 import streamlit as st
 import pandas as pd
