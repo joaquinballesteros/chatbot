@@ -1,4 +1,4 @@
-# == chatbot_ed_app.py (Versión Final v3 - RAG en Dos Pasos y Gemini 1.5 Pro) ==
+# == chatbot_ed_app.py (Versión Final v4 - RAG "Retrieve-then-Filter" y Gemini 1.5 Pro) ==
 import os
 import streamlit as st
 import pandas as pd
@@ -123,7 +123,6 @@ try:
     df_estudiantes = cargar_datos_estudiantes()
     idcv_value = st.query_params.get("idcv")
     nombre_value = st.query_params.get("nombre")
-
     if idcv_value and nombre_value:
         user_data = df_estudiantes[df_estudiantes['IDCV'] == str(idcv_value)]
         if not user_data.empty:
@@ -139,10 +138,6 @@ try:
 except FileNotFoundError:
     st.error(f"Error crítico: El fichero de usuarios '{USERS_CSV_PATH_ENC}' no se encontró.")
     st.stop()
-except Exception as e:
-    st.error(f"Ocurrió un error inesperado durante el login: {e}")
-    st.code(traceback.format_exc())
-    st.stop()
 
 # --- INICIALIZACIÓN DE SERVICIOS ---
 db = get_firestore_client()
@@ -150,25 +145,22 @@ api_key = st.secrets["GOOGLE_API_KEY"]
 vectorstore = inicializar_vectorstore(api_key)
 if vectorstore is None:
     st.stop()
-# --- MODELO ACTUALIZADO ---
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", google_api_key=api_key, temperature=0.5)
 
 # --- INICIO DEL CHAT ---
 st.title(f"Hola, {st.session_state.user_name}")
-
+# ... (código del sidebar y de inicialización de la sesión de chat sin cambios) ...
 with st.sidebar:
     st.header("Opciones de Chat")
     if st.button("🗑️ Resetear Chat", help="Inicia una nueva conversación."):
         reset_user_chat(db, st.session_state.user_idcv)
         st.rerun()
-
 if "messages" not in st.session_state:
     st.session_state.messages = load_active_user_history(db, st.session_state.user_idcv)
     if not st.session_state.messages:
         st.session_state.messages.append({"role": "assistant", "content": "¿Sobre qué tema o estructura de datos tienes dudas hoy?"})
 if "esperando_respuesta" not in st.session_state:
     st.session_state.esperando_respuesta = False
-
 for message in st.session_state.messages:
     if message.get("role") != "system":
         with st.chat_message(message["role"]):
@@ -189,25 +181,33 @@ if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"
         with st.spinner("⏳ El tutor está pensando..."):
             current_prompt = st.session_state.messages[-1]["content"]
             
-            # --- INICIO DEL RAG EN DOS PASOS ---
+            # --- INICIO DEL RAG "RETRIEVE-THEN-FILTER" ---
             st.info("Paso 1: Planificando qué documento consultar...")
             source_file = get_relevant_source_file(llm, current_prompt)
             
-            search_filter = {}
+            docs = []
             if source_file:
-                search_filter = {'source': source_file}
                 st.info(f"✅ Decisión: La búsqueda se centrará en el fichero `{source_file}`.")
+                st.info("Paso 2: Recuperando un lote amplio de candidatos...")
+                # Recuperamos más documentos de los necesarios para tener dónde elegir
+                candidate_docs = vectorstore.similarity_search(current_prompt, k=20)
+                
+                st.info("Paso 3: Filtrando los candidatos manualmente...")
+                # Filtramos la lista en Python
+                filtered_docs = [doc for doc in candidate_docs if doc.metadata.get("source") == source_file]
+                
+                # Nos quedamos con los 5 mejores de la lista ya filtrada
+                docs = filtered_docs[:5]
+                st.success(f"✅ Se han encontrado {len(docs)} chunks relevantes en el documento correcto.")
             else:
-                st.info("⚠️ No se ha podido determinar un fichero específico. Se buscará en todos los documentos.")
-
-            st.info("Paso 2: Recuperando chunks relevantes...")
-            docs = vectorstore.similarity_search(current_prompt, k=5, filter=search_filter)
-            # --- FIN DEL RAG EN DOS PASOS ---
+                st.warning("⚠️ No se ha podido determinar un fichero específico. Se realizará una búsqueda general.")
+                docs = vectorstore.similarity_search(current_prompt, k=5)
+            # --- FIN DEL RAG ---
 
             context = "\n\n".join([d.page_content for d in docs])
             
             last5 = st.session_state.messages[-6:-1] if len(st.session_state.messages) > 1 else []
-            chat_hist = "\n".join([f"- {('Pregunta' if h['role'] == 'user' else 'Respuesta')}: {h['content']}" for h in last5]) or "El estudiante no tiene interacciones previas."
+            chat_hist = "\n\n".join([f"- {('Pregunta' if h['role'] == 'user' else 'Respuesta')}: {h['content']}" for h in last5]) or "El estudiante no tiene interacciones previas."
 
             template = PromptTemplate(template=prompt_template_str, input_variables=["chat_history", "context", "question"])
             
