@@ -1,4 +1,4 @@
-
+# == chatbot_ed_app.py (Versión Final v2 con Gemini 1.5 Pro y Corrección de Rutas) ==
 import os
 import streamlit as st
 import pandas as pd
@@ -136,8 +136,8 @@ st.header("🤖 Tutor de Estructuras de Datos")
 try:
     df_estudiantes = cargar_datos_estudiantes()
     params = st.query_params
-    idcv_value = params.get("idcv", [None])
-    nombre_value = params.get("nombre", [None])
+    idcv_value = params.get("idcv", [None])[0]
+    nombre_value = params.get("nombre", [None])[0]
 
     if idcv_value and nombre_value:
         user_data = df_estudiantes[df_estudiantes['IDCV'] == idcv_value]
@@ -161,7 +161,7 @@ except Exception as e:
 # --- INICIALIZACIÓN DE SERVICIOS ---
 db = get_firestore_client()
 api_key = st.secrets["GOOGLE_API_KEY"]
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", google_api_key=api_key, temperature=0.5)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
 retriever = inicializar_vectorstore_and_retriever(llm, api_key)
 
 if retriever is None:
