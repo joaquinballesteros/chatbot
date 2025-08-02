@@ -1,4 +1,4 @@
-# == chatbot_ed_app.py (Versión Final con Corrección de SelfQueryRetriever) ==
+# == chatbot_ed_app.py (Versión Final v2 con Gemini 1.5 Pro y Corrección de Rutas) ==
 import os
 import streamlit as st
 import pandas as pd
@@ -12,27 +12,22 @@ from langchain_community.vectorstores import FAISS
 from langchain.prompts import PromptTemplate
 from langchain.chains.query_constructor.base import AttributeInfo
 from langchain.retrievers.self_query.base import SelfQueryRetriever
-# --- NUEVAS IMPORTACIONES PARA LA CONSTRUCCIÓN MANUAL ---
-from langchain.chains.query_constructor.base import (
-    StructuredQueryOutputParser,
-    get_query_constructor_prompt,
-)
-from langchain_core.runnables import RunnableParallel, RunnablePassthrough
+from langchain.chains.query_constructor.base import StructuredQueryOutputParser, get_query_constructor_prompt
 
 # --- LIBRERÍAS DE FIREBASE ---
 import google.oauth2.service_account
 from google.cloud import firestore
 
-# --- RUTAS Y CONSTANTES ---
+# --- RUTAS Y CONSTANTES (CORREGIDAS Y SIMPLIFICADAS) ---
 TMP_DIR = "tmp"
 INDEX_PATH = "faiss_index"
-USERS_CSV_PATH_ENC = os.path.join("data", "users.csv.encrypted")
+USERS_CSV_PATH_ENC = "data/users.csv.encrypted" # Ruta relativa directa
 USERS_CSV_PATH_TMP = os.path.join(TMP_DIR, "users.csv.tmp")
 
 if not os.path.exists(TMP_DIR):
     os.makedirs(TMP_DIR)
 
-# --- CONEXIÓN A FIREBASE (CACHEADA PARA EFICIENCIA) ---
+# --- CONEXIÓN A FIREBASE (CACHEADA) ---
 @st.cache_resource
 def get_firestore_client():
     key_dict = st.secrets["firebase_service_account"]
@@ -96,20 +91,10 @@ def inicializar_vectorstore_and_retriever(_llm, api_key: str):
     ]
     document_content_description = "Apuntes y diapositivas de la asignatura de Estructuras de Datos."
     
-    # --- CONSTRUCCIÓN MANUAL Y EXPLÍCITA DEL RETRIEVER ---
-    # 1. Crear el prompt para construir la consulta
-    prompt = get_query_constructor_prompt(
-        document_content_description,
-        metadata_field_info,
-    )
-    
-    # 2. Definir el parser de salida, especificando los comparadores que FAISS soporta
+    prompt = get_query_constructor_prompt(document_content_description, metadata_field_info)
     output_parser = StructuredQueryOutputParser.from_components()
-    
-    # 3. Construir la cadena (chain) que convierte la pregunta del usuario en una consulta estructurada
     query_constructor = prompt | _llm | output_parser
     
-    # 4. Construir el retriever final con la cadena de consulta explícita
     retriever = SelfQueryRetriever(
         query_constructor=query_constructor,
         vectorstore=vectorstore,
@@ -121,29 +106,56 @@ def inicializar_vectorstore_and_retriever(_llm, api_key: str):
 
 # --- PLANTILLA DE PROMPT ---
 prompt_template_str = """
-Eres un tutor de programación experto... (etc.)"""
+Eres un tutor de programación experto y tu objetivo es personalizar la asistencia basándote en el historial del estudiante para fomentar la innovación y el pensamiento crítico. No debes dar respuestas directas. Tu método se basa en guiar al estudiante hacia la solución.
+
+**Contexto del Historial del Estudiante:**
+{chat_history}
+
+**Documentos de la Asignatura:**
+{context}
+
+**Reglas Estrictas de Interacción:**
+1. Usa el Método Socrático: nunca des la respuesta directa. Guía con preguntas.
+2. Adapta la dificultad según el historial.
+3. Fomenta la autoexplicación.
+4. Da retroalimentación constructiva y personalizada.
+5. Estimula la curiosidad: termina con preguntas abiertas.
+
+**Implementación en Java o C según indique el estudiante.**
+
+**Pregunta Actual:**
+{question}
+
+**Respuesta del Tutor:**"""
 
 # --- INICIO DE LA APP ---
 st.set_page_config(page_title="Tutor ED App", layout="wide")
-st.header("🤖 Tutor de Estructuras de Datos (con Auto-Consulta)")
+st.header("🤖 Tutor de Estructuras de Datos")
 
 # --- LOGIN ---
-df_estudiantes = cargar_datos_estudiantes()
-params = st.query_params
-idcv_value = params.get("idcv", [None])[0]
-nombre_value = params.get("nombre", [None])[0]
+try:
+    df_estudiantes = cargar_datos_estudiantes()
+    params = st.query_params
+    idcv_value = params.get("idcv", [None])[0]
+    nombre_value = params.get("nombre", [None])[0]
 
-if idcv_value and nombre_value:
-    user_data = df_estudiantes[df_estudiantes['IDCV'] == idcv_value]
-    if not user_data.empty:
-        st.session_state.authenticated = True
-        st.session_state.user_idcv = idcv_value
-        st.session_state.user_name = user_data.iloc[0]['Nombre']
+    if idcv_value and nombre_value:
+        user_data = df_estudiantes[df_estudiantes['IDCV'] == idcv_value]
+        if not user_data.empty:
+            st.session_state.authenticated = True
+            st.session_state.user_idcv = idcv_value
+            st.session_state.user_name = user_data.iloc[0]['Nombre']
+        else:
+            st.error(f"❌ Usuario no autorizado. IDCV: {idcv_value}")
+            st.stop()
     else:
-        st.error(f"❌ Usuario no autorizado. IDCV: {idcv_value}")
+        st.error("❌ Acceso no autorizado. Faltan credenciales en la URL.")
         st.stop()
-else:
-    st.error("❌ Acceso no autorizado. Faltan credenciales.")
+except FileNotFoundError:
+    st.error("Error crítico: El fichero de usuarios 'data/users.csv.encrypted' no se encontró en el repositorio.")
+    st.stop()
+except Exception as e:
+    st.error(f"Ocurrió un error inesperado durante el login: {e}")
     st.stop()
 
 # --- INICIALIZACIÓN DE SERVICIOS ---
