@@ -136,17 +136,24 @@ st.header("🤖 Tutor de Estructuras de Datos")
 try:
     df_estudiantes = cargar_datos_estudiantes()
     params = st.query_params
-    idcv_value = params.get("idcv", [None])[0]
-    nombre_value = params.get("nombre", [None])[0]
+    idcv_values = params.get("idcv", None)
+    nombre_values = params.get("nombre", None)
 
-    if idcv_value and nombre_value:
-        user_data = df_estudiantes[df_estudiantes['IDCV'] == idcv_value]
+    # Permitir múltiples valores de idcv/nombre en la URL
+    if idcv_values and nombre_values:
+        # Si hay varios idcv, buscar todos los que coincidan
+        if isinstance(idcv_values, list):
+            user_data = df_estudiantes[df_estudiantes['IDCV'].isin(idcv_values)]
+            idcv_value = idcv_values[0]  # Usar el primero para la sesión
+        else:
+            user_data = df_estudiantes[df_estudiantes['IDCV'] == idcv_values]
+            idcv_value = idcv_values
         if not user_data.empty:
             st.session_state.authenticated = True
             st.session_state.user_idcv = idcv_value
             st.session_state.user_name = user_data.iloc[0]['Nombre']
         else:
-            st.error(f"❌ Usuario no autorizado. IDCV: {idcv_value}")
+            st.error(f"❌ Usuario no autorizado. IDCV: {idcv_values}")
             st.stop()
     else:
         st.error("❌ Acceso no autorizado. Faltan credenciales en la URL.")
