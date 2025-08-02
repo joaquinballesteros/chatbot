@@ -1,4 +1,4 @@
-# == chatbot_ed_app.py (Versión Final con Firebase y RAG) ==
+# == chatbot_ed_app.py (Versión Final con Firebase y RAG Persistente) ==
 import os
 import streamlit as st
 import pandas as pd
@@ -89,11 +89,11 @@ def cargar_datos_estudiantes():
 @st.cache_resource
 def inicializar_vectorstore(api_key: str):
     """
-    Carga el índice FAISS pre-construido. Si no existe, muestra un error.
+    Carga el índice FAISS pre-construido desde el disco. Si no existe, muestra un error.
     """
     if not os.path.exists(INDEX_PATH):
-        st.error("El índice vectorial (faiss_index) no ha sido creado todavía.")
-        st.warning("Por favor, ve a la página 'Admin - Crear Indice' para generar el índice primero.")
+        st.error("El índice vectorial (faiss_index) no se encontró en el repositorio.")
+        st.warning("Por favor, genera el índice localmente con 'create_and_save_index.py' y súbelo a GitHub.")
         return None
 
     try:
@@ -138,7 +138,7 @@ Eres un tutor de programación experto y tu objetivo es personalizar la asistenc
 
 # --- CONFIGURACIÓN E INICIO DE LA APP ---
 st.set_page_config(page_title="Tutor ED App", layout="wide")
-st.header("🤖 Tutor de Estructuras de Datos 2526")
+st.header("🤖 Tutor de Estructuras de Datos")
 
 # --- LOGIN ---
 df_estudiantes = cargar_datos_estudiantes()
@@ -170,7 +170,7 @@ vectorstore = inicializar_vectorstore(api_key)
 if vectorstore is None:
     st.stop()
     
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", google_api_key=api_key, temperature=0.5)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
 
 # --- INICIO DEL CHAT ---
 st.title(f"Hola, {st.session_state.user_name}")
@@ -209,26 +209,30 @@ if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"
     try:
         with st.spinner("⏳ El tutor está pensando..."):
             current_prompt = st.session_state.messages[-1]["content"]
-            history_for_prompt = st.session_state.messages
             
             # Búsqueda de contexto en el RAG
             docs = vectorstore.similarity_search(current_prompt, k=5)
             context = "\n\n".join([d.page_content for d in docs])
             
             # Preparación del historial para el prompt
-            last5 = history_for_prompt[-6:-1] if len(history_for_prompt) > 1 else []
+            last5 = st.session_state.messages[-6:-1] if len(st.session_state.messages) > 1 else []
             chat_hist = "\n".join([f"- {('Pregunta' if h['role'] == 'user' else 'Respuesta')}: {h['content']}" for h in last5]) or "El estudiante no tiene interacciones previas."
 
-            # Creación de la cadena de LangChain
+            # Creación de la plantilla
             template = PromptTemplate(template=prompt_template_str, input_variables=["chat_history", "context", "question"])
-            chain = template | llm
-
+            
             # Expansor de depuración para ver el prompt final
             with st.expander("🕵️‍♂️ **Ver Prompt Enviado al LLM**"):
-                final_prompt = template.render(chat_history=chat_hist, context=context, question=current_prompt)
-                st.text_area("Prompt Final Completo", final_prompt, height=400)
-            
-            # Invocación del LLM
+                # La forma correcta de "renderizar" el prompt para visualizarlo
+                filled_prompt = template.format_prompt(
+                    chat_history=chat_hist, 
+                    context=context, 
+                    question=current_prompt
+                ).to_string()
+                st.text_area("Prompt Final Completo (tal como lo ve el LLM)", filled_prompt, height=400)
+
+            # Creación e invocación de la cadena de LangChain
+            chain = template | llm
             resp_content = chain.invoke({
                 "chat_history": chat_hist,
                 "context": context,
