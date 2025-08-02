@@ -1,27 +1,24 @@
-# Streamlit y UI
+# Interfaz y UI
 streamlit==1.47.0
 
-# Manipulación de datos
+# Datos y cifrado
 pandas==2.3.1
-
-# Cifrado para Fernet (lectura de CSV cifrado)
 cryptography==45.0.5
 
-# Firestore
-google-cloud-firestore>=2.25.1
+# Firestore (última versión disponible en PyPI ≥2.0)
+google-cloud-firestore==2.21.0
 
-# Google Generative AI (Gemini)
+# Gemini / Google Generative AI
 google-ai-generativelanguage==0.6.18
 langchain-google-genai==2.1.8
 
-# LangChain retriever RAG (sin ChromaDB)
+# RAG sin ChromaDB
 langchain-community==0.3.27
 
-# FAISS para vector store
+# Vector store
 faiss-cpu
 
-# Google API extras (autenticación y cliente)
+# Google API extras (autenticación)
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
-
