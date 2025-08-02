@@ -87,7 +87,7 @@ def inicializar_vectorstore(api_key: str):
     return vectorstore
 
 # --- LÓGICA DE RAG EN DOS PASOS ---
-   file_topic_mapping = {
+file_topic_mapping = {
     # Primeros ficheros de C, punteros y grafos
     "TipoPuntero.pdf": "Descripción de tipos de punteros en C",
     "Punteros_y_Arrays.pdf": "Relación entre punteros y arrays en C y aritmética de punteros",
@@ -113,6 +113,7 @@ def inicializar_vectorstore(api_key: str):
     "5ÁrbolesAVL.pdf": "Árboles AVL: definición, propiedades de equilibrio, rotaciones simples y dobles, operaciones de inserción y eliminación, complejidad y detalles de implementación en Java",
     "2Izquierdistas.pdf": "Montículos izquierdistas ponderados: propiedad izquierdista y de orden de montículo, fusión eficiente, inserción, eliminación y complejidad, con implementación en Java",
 }
+
 
 document_list_description = "\n".join([f"- `{os.path.join('documentos_pdf', key)}`: {value}" for key, value in file_topic_mapping.items()])
 source_selection_prompt_template = f"""
