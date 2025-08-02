@@ -295,4 +295,4 @@ if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"
     
     finally:
         st.session_state.esperando_respuesta = False
-        st.rerun()```
+        st.rerun()
