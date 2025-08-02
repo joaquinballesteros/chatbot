@@ -1,4 +1,4 @@
-# == chatbot_ed_app.py (Versión Final v6 - Con Fallback si RAG falla) ==
+# == chatbot_ed_app.py (Versión Final v7 - Con control de Reset) ==
 import os
 import streamlit as st
 import pandas as pd
@@ -14,6 +14,7 @@ from langchain.prompts import PromptTemplate
 # --- LIBRERÍAS DE FIREBASE ---
 import google.oauth2.service_account
 from google.cloud import firestore
+from cryptography.fernet import Fernet # Necesario para cargar datos
 
 # --- RUTAS Y CONSTANTES ---
 TMP_DIR = "tmp"
@@ -34,7 +35,6 @@ def get_firestore_client():
 
 # --- GESTIÓN DE HISTORIAL ---
 def load_active_user_history(db: firestore.Client, user_id: str):
-    # ... (código sin cambios)
     historial_ref = db.collection('users').document(user_id).collection('historial')
     reset_query = historial_ref.where("role", "==", "system").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1)
     reset_docs = list(reset_query.stream())
@@ -43,13 +43,11 @@ def load_active_user_history(db: firestore.Client, user_id: str):
     return [doc.to_dict() for doc in query.stream()]
 
 def save_message_to_history(db: firestore.Client, user_id: str, message: dict):
-    # ... (código sin cambios)
     message_to_save = message.copy()
     message_to_save['timestamp'] = firestore.SERVER_TIMESTAMP
     db.collection('users').document(user_id).collection('historial').add(message_to_save)
 
 def reset_user_chat(db: firestore.Client, user_id: str):
-    # ... (código sin cambios)
     reset_message = {"role": "system", "content": f"--- CHAT RESETEADO POR EL USUARIO ---"}
     save_message_to_history(db, user_id, reset_message)
     st.session_state.messages = []
@@ -57,9 +55,7 @@ def reset_user_chat(db: firestore.Client, user_id: str):
 # --- FUNCIONES AUXILIARES ---
 @st.cache_data(ttl=3600)
 def cargar_datos_estudiantes():
-    # ... (código sin cambios)
     fernet_key = st.secrets["encryption"]["key"].encode()
-    from cryptography.fernet import Fernet
     fernet = Fernet(fernet_key)
     with open(USERS_CSV_PATH_ENC, 'rb') as f_enc:
         token = f_enc.read()
@@ -73,7 +69,6 @@ def cargar_datos_estudiantes():
 
 @st.cache_resource
 def inicializar_vectorstore(api_key: str):
-    # ... (código sin cambios)
     if not os.path.exists(INDEX_PATH):
         st.error(f"Índice vectorial '{INDEX_PATH}' no encontrado.")
         return None
@@ -86,7 +81,6 @@ def inicializar_vectorstore(api_key: str):
     st.sidebar.success("✅ Índice RAG cargado.", icon="📚")
     return vectorstore
 
-# --- LÓGICA DE RAG EN DOS PASOS ---
 # --- LÓGICA DE RAG EN DOS PASOS ---
 file_topic_mapping = {
     # Primeros ficheros de C, punteros y grafos
@@ -120,7 +114,6 @@ source_selection_prompt_template = f"""
 Eres un asistente experto en clasificar preguntas... (etc.)"""
 
 def get_relevant_source_file(llm, user_query):
-    # ... (código sin cambios)
     prompt = PromptTemplate.from_template(source_selection_prompt_template)
     chain = prompt | llm
     response = chain.invoke({"user_query": user_query})
@@ -212,22 +205,36 @@ api_key = st.secrets["GOOGLE_API_KEY"]
 vectorstore = inicializar_vectorstore(api_key)
 if vectorstore is None:
     st.stop()
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", google_api_key=api_key, temperature=0.5)
 
 # --- INICIO DEL CHAT ---
 st.title(f"Hola, {st.session_state.user_name}")
-# ... (código del sidebar y de inicialización de la sesión de chat sin cambios) ...
+
+# --- Modificación para el botón de reseteo ---
 with st.sidebar:
     st.header("Opciones de Chat")
-    if st.button("🗑️ Resetear Chat", help="Inicia una nueva conversación."):
+    
+    # El botón se habilita/deshabilita según el estado de la sesión
+    if st.button("🗑️ Resetear Chat", 
+                 help="Inicia una nueva conversación. Se desactivará hasta tu próximo mensaje.", 
+                 disabled=st.session_state.get("reset_button_disabled", False)):
         reset_user_chat(db, st.session_state.user_idcv)
+        st.session_state.reset_button_disabled = True # Desactivamos el botón inmediatamente
         st.rerun()
+
+# Inicialización de variables de estado
 if "messages" not in st.session_state:
     st.session_state.messages = load_active_user_history(db, st.session_state.user_idcv)
     if not st.session_state.messages:
         st.session_state.messages.append({"role": "assistant", "content": "¿Sobre qué tema o estructura de datos tienes dudas hoy?"})
+        
 if "esperando_respuesta" not in st.session_state:
     st.session_state.esperando_respuesta = False
+    
+if "reset_button_disabled" not in st.session_state:
+    st.session_state.reset_button_disabled = False
+
+# Mostrar historial
 for message in st.session_state.messages:
     if message.get("role") != "system":
         with st.chat_message(message["role"]):
@@ -235,7 +242,11 @@ for message in st.session_state.messages:
 
 # --- LÓGICA PRINCIPAL DE CHAT ---
 if prompt := st.chat_input("Escribe aquí tu duda...", disabled=st.session_state.esperando_respuesta):
-    # ... (código sin cambios)
+    
+    # Reactivar el botón de reseteo si el usuario interactúa
+    if st.session_state.get("reset_button_disabled", False):
+        st.session_state.reset_button_disabled = False
+
     user_message = {"role": "user", "content": prompt}
     st.session_state.messages.append(user_message)
     save_message_to_history(db, st.session_state.user_idcv, user_message)
@@ -260,26 +271,21 @@ if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"
             else:
                 docs = vectorstore.similarity_search(current_prompt, k=5)
             
-            # --- INICIO: LÓGICA CONDICIONAL DE PROMPT ---
-            
+            # --- LÓGICA CONDICIONAL DE PROMPT ---
             last5 = st.session_state.messages[-6:-1] if len(st.session_state.messages) > 1 else []
             chat_hist = "\n\n".join([f"- {('Pregunta' if h['role'] == 'user' else 'Respuesta')}: {h['content']}" for h in last5]) or "El estudiante no tiene interacciones previas."
 
             if docs:
-                # Si SÍ tenemos documentos, usamos el prompt de RAG
                 st.success(f"✅ Se han encontrado {len(docs)} chunks relevantes. Usando modo RAG.")
                 context = "\n\n".join([d.page_content for d in docs])
                 template = PromptTemplate(template=prompt_with_rag_template_str, input_variables=["chat_history", "context", "question"])
                 chain_input = {"chat_history": chat_hist, "context": context, "question": current_prompt}
             else:
-                # Si NO tenemos documentos, usamos el prompt de conocimiento general
                 st.warning("⚠️ No se encontraron chunks relevantes. El tutor responderá desde su conocimiento general.")
-                context = "No se encontró información en los documentos de la asignatura." # Para el debug
+                context = "No se encontró información en los documentos de la asignatura." 
                 template = PromptTemplate(template=prompt_without_rag_template_str, input_variables=["chat_history", "question"])
                 chain_input = {"chat_history": chat_hist, "question": current_prompt}
             
-            # --- FIN: LÓGICA CONDICIONAL DE PROMPT ---
-
             with st.expander("🕵️‍♂️ **Ver Prompt Enviado al LLM**"):
                 filled_prompt = template.format_prompt(**chain_input).to_string()
                 st.text_area("Prompt Final Completo", filled_prompt, height=400)
@@ -294,7 +300,6 @@ if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"
         save_message_to_history(db, st.session_state.user_idcv, assistant_message)
 
     except Exception as e:
-        # ... (código de manejo de errores sin cambios)
         error_message = f"❌ Lo siento, ocurrió un error al procesar tu pregunta.\n\nDetalle: {str(e)}"
         st.error(error_message)
         st.code(traceback.format_exc(), language="python")
