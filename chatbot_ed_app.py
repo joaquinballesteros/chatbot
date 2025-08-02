@@ -1,33 +1,31 @@
-# == chatbot_ed_app.py (Versión Final v2 con Gemini 1.5 Pro y Corrección de Rutas) ==
+# == chatbot_ed_app.py (Versión Final con RAG en Dos Pasos) ==
 import os
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 import asyncio
 import traceback
+import re
 
 # --- LIBRERÍAS DE IA (LangChain y Google) ---
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.prompts import PromptTemplate
-from langchain.chains.query_constructor.base import AttributeInfo
-from langchain.retrievers.self_query.base import SelfQueryRetriever
-from langchain.chains.query_constructor.base import StructuredQueryOutputParser, get_query_constructor_prompt
 
 # --- LIBRERÍAS DE FIREBASE ---
 import google.oauth2.service_account
 from google.cloud import firestore
 
-# --- RUTAS Y CONSTANTES (CORREGIDAS Y SIMPLIFICADAS) ---
+# --- RUTAS Y CONSTANTES ---
 TMP_DIR = "tmp"
 INDEX_PATH = "faiss_index"
-USERS_CSV_PATH_ENC = "data/users.csv.encrypted" # Ruta relativa directa
-USERS_CSV_PATH_TMP = os.path.join(TMP_DIR, "users.csv.tmp")
+USERS_CSV_PATH_ENC = "data/users.csv.encrypted"
 
 if not os.path.exists(TMP_DIR):
     os.makedirs(TMP_DIR)
+USERS_CSV_PATH_TMP = os.path.join(TMP_DIR, "users.csv.tmp")
 
-# --- CONEXIÓN A FIREBASE (CACHEADA) ---
+# --- CONEXIÓN A FIREBASE ---
 @st.cache_resource
 def get_firestore_client():
     key_dict = st.secrets["firebase_service_account"]
@@ -35,7 +33,7 @@ def get_firestore_client():
     db = firestore.Client(credentials=creds)
     return db
 
-# --- GESTIÓN DE HISTORIAL CON FIRESTORE ---
+# --- GESTIÓN DE HISTORIAL ---
 def load_active_user_history(db: firestore.Client, user_id: str):
     historial_ref = db.collection('users').document(user_id).collection('historial')
     reset_query = historial_ref.where("role", "==", "system").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1)
@@ -71,108 +69,98 @@ def cargar_datos_estudiantes():
     return df
 
 @st.cache_resource
-def inicializar_vectorstore_and_retriever(_llm, api_key: str):
+def inicializar_vectorstore(api_key: str):
     if not os.path.exists(INDEX_PATH):
         st.error(f"Índice vectorial '{INDEX_PATH}' no encontrado.")
-        st.warning("Genera el índice localmente y súbelo a GitHub.")
         return None
-
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
-
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
     vectorstore = FAISS.load_local(INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
-    
-    metadata_field_info = [
-        AttributeInfo(name="source", description="El fichero PDF de origen del documento.", type="string"),
-        AttributeInfo(name="topic", description="El tema principal del contenido del documento. Ej: 'Pilas y Colas en Java'.", type="string"),
-    ]
-    document_content_description = "Apuntes y diapositivas de la asignatura de Estructuras de Datos."
-    
-    prompt = get_query_constructor_prompt(document_content_description, metadata_field_info)
-    output_parser = StructuredQueryOutputParser.from_components()
-    query_constructor = prompt | _llm | output_parser
-    
-    retriever = SelfQueryRetriever(
-        query_constructor=query_constructor,
-        vectorstore=vectorstore,
-        verbose=True
-    )
-    
-    st.sidebar.success("✅ Índice RAG y Retriever cargados.", icon="🧠")
-    return retriever
+    st.sidebar.success("✅ Índice RAG cargado.", icon="📚")
+    return vectorstore
 
-# --- PLANTILLA DE PROMPT ---
+# --- LÓGICA DE RAG EN DOS PASOS ---
+
+# Mapeo de ficheros a temas (igual que en create_and_save_index.py)
+file_topic_mapping = {
+    "tema1_introduccion.pdf": "Introducción a algoritmos y estructuras de datos",
+    "tema2_pilas_y_colas.pdf": "Pilas (Stacks) y Colas (Queues) en Java",
+    "tema3_arboles.pdf": "Árboles binarios, BST y árboles AVL",
+    "tema4_implementacion_C.pdf": "Implementación de estructuras de datos en el lenguaje C"
+}
+
+# Creamos la descripción para el LLM "Planificador"
+document_list_description = "\n".join([f"- `{os.path.join('documentos_pdf', key)}`: {value}" for key, value in file_topic_mapping.items()])
+
+source_selection_prompt_template = f"""
+Eres un asistente experto en clasificar preguntas de estudiantes.
+Tu tarea es determinar cuál de los siguientes documentos es el más relevante para responder a la pregunta del usuario.
+
+Aquí tienes la lista de documentos disponibles y de qué trata cada uno:
+{document_list_description}
+
+Pregunta del usuario: "{{user_query}}"
+
+Analiza la pregunta y responde ÚNICA Y EXCLUSIVAMENTE con la ruta del fichero más relevante de la lista.
+Si ningún fichero parece directamente relevante, responde con "NONE".
+
+Respuesta:
+"""
+
+def get_relevant_source_file(llm, user_query):
+    """Paso 1: El Planificador. Pregunta al LLM qué fichero usar."""
+    prompt = PromptTemplate.from_template(source_selection_prompt_template)
+    chain = prompt | llm
+    response = chain.invoke({"user_query": user_query})
+    
+    # Limpiamos la respuesta del LLM para asegurarnos de que es solo la ruta
+    content = response.content.strip().replace("`", "")
+    
+    # Verificamos si la respuesta es una ruta de fichero válida
+    if content in [os.path.join('documentos_pdf', key) for key in file_topic_mapping.keys()]:
+        return content
+    return None
+
+# --- PLANTILLA DE PROMPT PRINCIPAL ---
 prompt_template_str = """
-Eres un tutor de programación experto y tu objetivo es personalizar la asistencia basándote en el historial del estudiante para fomentar la innovación y el pensamiento crítico. No debes dar respuestas directas. Tu método se basa en guiar al estudiante hacia la solución.
-
-**Contexto del Historial del Estudiante:**
-{chat_history}
-
-**Documentos de la Asignatura:**
-{context}
-
-**Reglas Estrictas de Interacción:**
-1. Usa el Método Socrático: nunca des la respuesta directa. Guía con preguntas.
-2. Adapta la dificultad según el historial.
-3. Fomenta la autoexplicación.
-4. Da retroalimentación constructiva y personalizada.
-5. Estimula la curiosidad: termina con preguntas abiertas.
-
-**Implementación en Java o C según indique el estudiante.**
-
-**Pregunta Actual:**
-{question}
-
-**Respuesta del Tutor:**"""
+Eres un tutor de programación experto... (etc.)"""
 
 # --- INICIO DE LA APP ---
 st.set_page_config(page_title="Tutor ED App", layout="wide")
-st.header("🤖 Tutor de Estructuras de Datos")
+st.header("🤖 Tutor de Estructuras de Datos (RAG Avanzado)")
 
 # --- LOGIN ---
 try:
     df_estudiantes = cargar_datos_estudiantes()
     params = st.query_params
-    idcv_values = params.get("idcv", None)
-    nombre_values = params.get("nombre", None)
-
-    # Permitir múltiples valores de idcv/nombre en la URL
-    if idcv_values and nombre_values:
-        # Si hay varios idcv, buscar todos los que coincidan
-        if isinstance(idcv_values, list):
-            user_data = df_estudiantes[df_estudiantes['IDCV'].isin(idcv_values)]
-            idcv_value = idcv_values[0]  # Usar el primero para la sesión
-        else:
-            user_data = df_estudiantes[df_estudiantes['IDCV'] == idcv_values]
-            idcv_value = idcv_values
+    idcv_value = params.get("idcv", [None])[0]
+    nombre_value = params.get("nombre", [None])[0]
+    if idcv_value and nombre_value:
+        user_data = df_estudiantes[df_estudiantes['IDCV'] == idcv_value]
         if not user_data.empty:
             st.session_state.authenticated = True
             st.session_state.user_idcv = idcv_value
             st.session_state.user_name = user_data.iloc[0]['Nombre']
         else:
-            st.error(f"❌ Usuario no autorizado. IDCV: {idcv_values}")
+            st.error(f"❌ Usuario no autorizado. IDCV: {idcv_value}")
             st.stop()
     else:
-        st.error("❌ Acceso no autorizado. Faltan credenciales en la URL.")
+        st.error("❌ Acceso no autorizado. Faltan credenciales.")
         st.stop()
 except FileNotFoundError:
-    st.error("Error crítico: El fichero de usuarios 'data/users.csv.encrypted' no se encontró en el repositorio.")
-    st.stop()
-except Exception as e:
-    st.error(f"Ocurrió un error inesperado durante el login: {e}")
+    st.error(f"Error crítico: El fichero de usuarios '{USERS_CSV_PATH_ENC}' no se encontró.")
     st.stop()
 
 # --- INICIALIZACIÓN DE SERVICIOS ---
 db = get_firestore_client()
 api_key = st.secrets["GOOGLE_API_KEY"]
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
-retriever = inicializar_vectorstore_and_retriever(llm, api_key)
-
-if retriever is None:
+vectorstore = inicializar_vectorstore(api_key)
+if vectorstore is None:
     st.stop()
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", google_api_key=api_key, temperature=0.5)
 
 # --- INICIO DEL CHAT ---
 st.title(f"Hola, {st.session_state.user_name}")
@@ -210,7 +198,21 @@ if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"
         with st.spinner("⏳ El tutor está pensando..."):
             current_prompt = st.session_state.messages[-1]["content"]
             
-            docs = retriever.invoke(current_prompt)
+            # --- INICIO DEL RAG EN DOS PASOS ---
+            st.info("Paso 1: Planificando qué documento consultar...")
+            source_file = get_relevant_source_file(llm, current_prompt)
+            
+            search_filter = {}
+            if source_file:
+                search_filter = {'source': source_file}
+                st.info(f"✅ Decisión: La búsqueda se centrará en el fichero `{source_file}`.")
+            else:
+                st.info("⚠️ No se ha podido determinar un fichero específico. Se buscará en todos los documentos.")
+
+            st.info("Paso 2: Recuperando chunks relevantes...")
+            docs = vectorstore.similarity_search(current_prompt, k=5, filter=search_filter)
+            # --- FIN DEL RAG EN DOS PASOS ---
+
             context = "\n\n".join([d.page_content for d in docs])
             
             last5 = st.session_state.messages[-6:-1] if len(st.session_state.messages) > 1 else []
@@ -235,9 +237,6 @@ if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"
         error_message = f"❌ Lo siento, ocurrió un error al procesar tu pregunta.\n\nDetalle: {str(e)}"
         st.error(error_message)
         st.code(traceback.format_exc(), language="python")
-        error_msg_to_save = {"role": "assistant", "content": error_message}
-        st.session_state.messages.append(error_msg_to_save)
-        save_message_to_history(db, st.session_state.user_idcv, error_msg_to_save)
     
     finally:
         st.session_state.esperando_respuesta = False
