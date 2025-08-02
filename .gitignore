@@ -2,6 +2,5 @@
 .venv
 .DS_Store
 .streamlit/secrets.toml
-documentos/*
 .RAG/*
 __pycache__
