@@ -1,4 +1,4 @@
-# == chatbot_ed_app.py (Versión Profesional con SelfQueryRetriever y Metadatos) ==
+# == chatbot_ed_app.py (Versión Final con SelfQueryRetriever Explícito) ==
 import os
 import streamlit as st
 import pandas as pd
@@ -12,11 +12,12 @@ from langchain_community.vectorstores import FAISS
 from langchain.prompts import PromptTemplate
 from langchain.chains.query_constructor.base import AttributeInfo
 from langchain.retrievers.self_query.base import SelfQueryRetriever
+# Importaciones explícitas para evitar el problema de Chroma/sqlite3
+from langchain_community.query_constructors.faiss import FAISSQueryConstructor
 
 # --- LIBRERÍAS DE FIREBASE ---
 import google.oauth2.service_account
 from google.cloud import firestore
-
 
 # --- RUTAS Y CONSTANTES ---
 TMP_DIR = "tmp"
@@ -27,7 +28,6 @@ USERS_CSV_PATH_TMP = os.path.join(TMP_DIR, "users.csv.tmp")
 if not os.path.exists(TMP_DIR):
     os.makedirs(TMP_DIR)
 
-
 # --- CONEXIÓN A FIREBASE (CACHEADA PARA EFICIENCIA) ---
 @st.cache_resource
 def get_firestore_client():
@@ -36,24 +36,14 @@ def get_firestore_client():
     db = firestore.Client(credentials=creds)
     return db
 
-
 # --- GESTIÓN DE HISTORIAL CON FIRESTORE ---
 def load_active_user_history(db: firestore.Client, user_id: str):
     historial_ref = db.collection('users').document(user_id).collection('historial')
     reset_query = historial_ref.where("role", "==", "system").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1)
     reset_docs = list(reset_query.stream())
-    
-    last_reset_timestamp = None
-    if reset_docs:
-        last_reset_timestamp = reset_docs[0].get('timestamp')
-
-    if last_reset_timestamp:
-        query = historial_ref.where("timestamp", ">", last_reset_timestamp).order_by("timestamp")
-    else:
-        query = historial_ref.order_by("timestamp")
-        
-    docs = query.stream()
-    return [doc.to_dict() for doc in docs]
+    last_reset_timestamp = reset_docs[0].get('timestamp') if reset_docs else None
+    query = historial_ref.where("timestamp", ">", last_reset_timestamp).order_by("timestamp") if last_reset_timestamp else historial_ref.order_by("timestamp")
+    return [doc.to_dict() for doc in query.stream()]
 
 def save_message_to_history(db: firestore.Client, user_id: str, message: dict):
     message_to_save = message.copy()
@@ -64,7 +54,6 @@ def reset_user_chat(db: firestore.Client, user_id: str):
     reset_message = {"role": "system", "content": f"--- CHAT RESETEADO POR EL USUARIO ---"}
     save_message_to_history(db, user_id, reset_message)
     st.session_state.messages = []
-
 
 # --- FUNCIONES AUXILIARES ---
 @st.cache_data(ttl=3600)
@@ -84,9 +73,6 @@ def cargar_datos_estudiantes():
 
 @st.cache_resource
 def inicializar_vectorstore_and_retriever(_llm, api_key: str):
-    """
-    Carga el índice FAISS y crea el SelfQueryRetriever con metadatos.
-    """
     if not os.path.exists(INDEX_PATH):
         st.error(f"Índice vectorial '{INDEX_PATH}' no encontrado.")
         st.warning("Genera el índice localmente y súbelo a GitHub.")
@@ -100,26 +86,19 @@ def inicializar_vectorstore_and_retriever(_llm, api_key: str):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
     vectorstore = FAISS.load_local(INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
     
-    # --- CONFIGURACIÓN DEL SELF-QUERY RETRIEVER CON METADATOS AVANZADOS ---
     metadata_field_info = [
-        AttributeInfo(
-            name="source",
-            description="El fichero PDF de origen del documento, por ejemplo `documentos_pdf/tema1.pdf`.",
-            type="string",
-        ),
-        AttributeInfo(
-            name="topic",
-            description="Describe el tema principal del contenido del documento. Puede ser, por ejemplo, 'Pilas y Colas en Java', 'Árboles binarios', o 'Implementación de estructuras de datos en el lenguaje C'.",
-            type="string",
-        ),
+        AttributeInfo(name="source", description="El fichero PDF de origen del documento.", type="string"),
+        AttributeInfo(name="topic", description="El tema principal del contenido del documento. Ej: 'Pilas y Colas en Java'.", type="string"),
     ]
     document_content_description = "Apuntes y diapositivas de la asignatura de Estructuras de Datos."
     
-    retriever = SelfQueryRetriever.from_llm(
-        _llm,
-        vectorstore,
-        document_content_description,
-        metadata_field_info,
+    # Construcción explícita del traductor y retriever para evitar la importación de Chroma
+    structured_query_translator = FAISSQueryConstructor().get_translator()
+    retriever = SelfQueryRetriever(
+        query_constructor=_llm | structured_query_translator,
+        vectorstore=vectorstore,
+        document_content_description=document_content_description,
+        metadata_field_info=metadata_field_info,
         verbose=True
     )
     
@@ -137,10 +116,8 @@ st.header("🤖 Tutor de Estructuras de Datos (con Auto-Consulta)")
 # --- LOGIN ---
 df_estudiantes = cargar_datos_estudiantes()
 params = st.query_params
-idcv_param = params.get("idcv", [None])
-nombre_param = params.get("nombre", [None])
-idcv_value = idcv_param[0] if isinstance(idcv_param, list) else idcv_param
-nombre_value = nombre_param[0] if isinstance(nombre_param, list) else nombre_param
+idcv_value = params.get("idcv", [None])[0]
+nombre_value = params.get("nombre", [None])[0]
 
 if idcv_value and nombre_value:
     user_data = df_estudiantes[df_estudiantes['IDCV'] == idcv_value]
@@ -200,11 +177,7 @@ if st.session_state.esperando_respuesta and st.session_state.messages[-1]["role"
         with st.spinner("⏳ El tutor está pensando..."):
             current_prompt = st.session_state.messages[-1]["content"]
             
-            # --- USO DEL SELF-QUERY RETRIEVER ---
-            st.info("🔎 Realizando auto-consulta para encontrar documentos relevantes...")
             docs = retriever.invoke(current_prompt)
-            st.info(f"✅ Se encontraron {len(docs)} documentos relevantes.")
-            
             context = "\n\n".join([d.page_content for d in docs])
             
             last5 = st.session_state.messages[-6:-1] if len(st.session_state.messages) > 1 else []
