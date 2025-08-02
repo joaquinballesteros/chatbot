@@ -205,7 +205,7 @@ api_key = st.secrets["GOOGLE_API_KEY"]
 vectorstore = inicializar_vectorstore(api_key)
 if vectorstore is None:
     st.stop()
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", google_api_key=api_key, temperature=0.5)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", google_api_key=api_key, temperature=0.5)
 
 # --- INICIO DEL CHAT ---
 st.title(f"Hola, {st.session_state.user_name}")
