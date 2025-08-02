@@ -136,8 +136,12 @@ st.header("🤖 Tutor de Estructuras de Datos")
 try:
     df_estudiantes = cargar_datos_estudiantes()
     params = st.query_params
-    idcv_value = params.get("idcv", [None])[0]
-    nombre_value = params.get("nombre", [None])[0]
+    idcv_value = params.get("idcv", [None])
+    if isinstance(idcv_value, list):
+        idcv_value = idcv_value[0]
+    nombre_value = params.get("nombre", [None])
+    if isinstance(nombre_value, list):
+        nombre_value = nombre_value[0]
 
     if idcv_value and nombre_value:
         user_data = df_estudiantes[df_estudiantes['IDCV'] == idcv_value]
