@@ -1,0 +1,10 @@
+.env
+.venv
+.DS_Store
+.streamlit/secrets.toml
+.repo
+.data/users.csv
+./estadisticas/out_dialogs/
+./estadisticas/out_summaries/
+./estadisticas/out_global/
+__pycache__

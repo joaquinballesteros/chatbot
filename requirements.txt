@@ -1,0 +1,25 @@
+# Interfaz y UI
+streamlit==1.47.0
+
+# Datos y cifrado
+pandas==2.3.1
+cryptography==45.0.5
+
+# Firestore (última versión disponible en PyPI ≥2.0)
+supabase
+
+# Gemini / Google Generative AI
+google-ai-generativelanguage==0.6.18
+langchain-openai
+langchain-google-genai
+
+# RAG sin ChromaDB
+langchain-community==0.3.27
+
+# Vector store
+faiss-cpu
+
+# Google API extras (autenticación)
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
